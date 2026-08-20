@@ -2,6 +2,7 @@
   let merchants = [];
   let paymentMethods = [];
   let leads = [];
+  let processing = [];
   let activeTab = "merchants";
 
   async function apiGet(path) {
@@ -22,10 +23,11 @@
   }
 
   async function loadAll() {
-    [merchants, paymentMethods, leads] = await Promise.all([
+    [merchants, paymentMethods, leads, processing] = await Promise.all([
       apiGet("/api/merchants"),
       apiGet("/api/payment-methods"),
       apiGet("/api/leads"),
+      apiGet("/api/processing"),
     ]);
   }
 
@@ -111,19 +113,21 @@
     document.getElementById("tabCountMerchants").textContent = merchants.length;
     document.getElementById("tabCountPayments").textContent = paymentMethods.length;
     document.getElementById("tabCountLeads").textContent = leads.length;
+    document.getElementById("tabCountProcessing").textContent = new Set(processing.map((r) => r.site)).size;
   }
 
   // ---------- Tabs ----------
   function switchTab(tab) {
     activeTab = tab;
     document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-    ["merchants", "payments", "match", "leads"].forEach((t) => {
+    ["merchants", "payments", "match", "leads", "processing"].forEach((t) => {
       document.getElementById("tab-" + t).style.display = t === tab ? "block" : "none";
     });
     if (tab === "merchants") renderMerchantsTab();
     if (tab === "payments") renderPaymentsTab();
     if (tab === "match") renderMatchTab();
     if (tab === "leads") renderLeadsTab();
+    if (tab === "processing") renderProcessingTab();
   }
 
   // ---------- Merchants tab ----------
@@ -948,6 +952,186 @@
     downloadCsv("leads_export.csv", rows);
   }
 
+  // ---------- Processing coverage tab ----------
+  // ISO 3166-1 alpha-2 -> country name (orders files use codes like CO, UA, DE).
+  const COUNTRY_NAMES = {
+    AD:"Andorra",AE:"United Arab Emirates",AF:"Afghanistan",AG:"Antigua and Barbuda",AI:"Anguilla",AL:"Albania",AM:"Armenia",AO:"Angola",AR:"Argentina",AT:"Austria",AU:"Australia",AW:"Aruba",AZ:"Azerbaijan",
+    BA:"Bosnia and Herzegovina",BB:"Barbados",BD:"Bangladesh",BE:"Belgium",BF:"Burkina Faso",BG:"Bulgaria",BH:"Bahrain",BI:"Burundi",BJ:"Benin",BM:"Bermuda",BN:"Brunei",BO:"Bolivia",BR:"Brazil",BS:"Bahamas",BT:"Bhutan",BW:"Botswana",BY:"Belarus",BZ:"Belize",
+    CA:"Canada",CD:"DR Congo",CG:"Congo",CH:"Switzerland",CI:"Côte d'Ivoire",CL:"Chile",CM:"Cameroon",CN:"China",CO:"Colombia",CR:"Costa Rica",CU:"Cuba",CV:"Cabo Verde",CW:"Curaçao",CY:"Cyprus",CZ:"Czechia",
+    DE:"Germany",DJ:"Djibouti",DK:"Denmark",DM:"Dominica",DO:"Dominican Republic",DZ:"Algeria",
+    EC:"Ecuador",EE:"Estonia",EG:"Egypt",ER:"Eritrea",ES:"Spain",ET:"Ethiopia",
+    FI:"Finland",FJ:"Fiji",FO:"Faroe Islands",FR:"France",
+    GA:"Gabon",GB:"United Kingdom",GD:"Grenada",GE:"Georgia",GF:"French Guiana",GH:"Ghana",GI:"Gibraltar",GL:"Greenland",GM:"Gambia",GN:"Guinea",GP:"Guadeloupe",GQ:"Equatorial Guinea",GR:"Greece",GT:"Guatemala",GU:"Guam",GW:"Guinea-Bissau",GY:"Guyana",
+    HK:"Hong Kong",HN:"Honduras",HR:"Croatia",HT:"Haiti",HU:"Hungary",
+    ID:"Indonesia",IE:"Ireland",IL:"Israel",IM:"Isle of Man",IN:"India",IQ:"Iraq",IR:"Iran",IS:"Iceland",IT:"Italy",
+    JE:"Jersey",JM:"Jamaica",JO:"Jordan",JP:"Japan",
+    KE:"Kenya",KG:"Kyrgyzstan",KH:"Cambodia",KM:"Comoros",KN:"Saint Kitts and Nevis",KP:"North Korea",KR:"South Korea",KW:"Kuwait",KY:"Cayman Islands",KZ:"Kazakhstan",
+    LA:"Laos",LB:"Lebanon",LC:"Saint Lucia",LI:"Liechtenstein",LK:"Sri Lanka",LR:"Liberia",LS:"Lesotho",LT:"Lithuania",LU:"Luxembourg",LV:"Latvia",LY:"Libya",
+    MA:"Morocco",MC:"Monaco",MD:"Moldova",ME:"Montenegro",MG:"Madagascar",MK:"North Macedonia",ML:"Mali",MM:"Myanmar",MN:"Mongolia",MO:"Macao",MQ:"Martinique",MR:"Mauritania",MT:"Malta",MU:"Mauritius",MV:"Maldives",MW:"Malawi",MX:"Mexico",MY:"Malaysia",MZ:"Mozambique",
+    NA:"Namibia",NC:"New Caledonia",NE:"Niger",NG:"Nigeria",NI:"Nicaragua",NL:"Netherlands",NO:"Norway",NP:"Nepal",NZ:"New Zealand",
+    OM:"Oman",PA:"Panama",PE:"Peru",PF:"French Polynesia",PG:"Papua New Guinea",PH:"Philippines",PK:"Pakistan",PL:"Poland",PR:"Puerto Rico",PS:"Palestine",PT:"Portugal",PY:"Paraguay",QA:"Qatar",
+    RE:"Réunion",RO:"Romania",RS:"Serbia",RU:"Russia",RW:"Rwanda",
+    SA:"Saudi Arabia",SB:"Solomon Islands",SC:"Seychelles",SD:"Sudan",SE:"Sweden",SG:"Singapore",SI:"Slovenia",SK:"Slovakia",SL:"Sierra Leone",SM:"San Marino",SN:"Senegal",SO:"Somalia",SR:"Suriname",SS:"South Sudan",SV:"El Salvador",SY:"Syria",SZ:"Eswatini",
+    TC:"Turks and Caicos",TD:"Chad",TG:"Togo",TH:"Thailand",TJ:"Tajikistan",TL:"Timor-Leste",TM:"Turkmenistan",TN:"Tunisia",TO:"Tonga",TR:"Turkey",TT:"Trinidad and Tobago",TW:"Taiwan",TZ:"Tanzania",
+    UA:"Ukraine",UG:"Uganda",US:"United States",UY:"Uruguay",UZ:"Uzbekistan",
+    VA:"Vatican City",VC:"Saint Vincent and the Grenadines",VE:"Venezuela",VG:"British Virgin Islands",VI:"U.S. Virgin Islands",VN:"Vietnam",VU:"Vanuatu",
+    WS:"Samoa",XK:"Kosovo",YE:"Yemen",YT:"Mayotte",ZA:"South Africa",ZM:"Zambia",ZW:"Zimbabwe",
+  };
+  function countryLabel(code) {
+    const c = String(code || "").toUpperCase();
+    return COUNTRY_NAMES[c] ? `${COUNTRY_NAMES[c]} (${c})` : c;
+  }
+
+  function populateProcFilters() {
+    const cSel = document.getElementById("procCountryFilter");
+    const mSel = document.getElementById("procMethodFilter");
+    const cCur = cSel.value, mCur = mSel.value;
+    const countries = Array.from(new Set(processing.map((r) => r.country))).sort((a, b) => countryLabel(a).localeCompare(countryLabel(b)));
+    const methods = Array.from(new Set(processing.map((r) => r.method))).sort();
+    cSel.innerHTML = '<option value="">All countries</option>' + countries.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(countryLabel(c))}</option>`).join("");
+    mSel.innerHTML = '<option value="">All methods</option>' + methods.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+    cSel.value = cCur; mSel.value = mCur;
+  }
+  function clearProcFilters() {
+    document.getElementById("procSearch").value = "";
+    document.getElementById("procCountryFilter").value = "";
+    document.getElementById("procMethodFilter").value = "";
+    renderProcessingTab();
+  }
+  function renderProcessingStats() {
+    const el = document.getElementById("processingStats");
+    const sites = new Set(processing.map((r) => r.site));
+    const countries = new Set(processing.map((r) => r.country));
+    const methods = new Set(processing.map((r) => r.method));
+    const orders = processing.reduce((s, r) => s + (r.count || 0), 0);
+    el.innerHTML = `
+      <div class="stat"><div class="n">${sites.size}</div><div class="l">Sites</div></div>
+      <div class="stat"><div class="n">${countries.size}</div><div class="l">Countries</div></div>
+      <div class="stat"><div class="n">${methods.size}</div><div class="l">Methods</div></div>
+      <div class="stat"><div class="n">${orders.toLocaleString()}</div><div class="l">Orders</div></div>`;
+  }
+  function renderProcessingTab() {
+    populateProcFilters();
+    renderProcessingStats();
+    const search = document.getElementById("procSearch").value.trim().toLowerCase();
+    const cf = document.getElementById("procCountryFilter").value;
+    const mf = document.getElementById("procMethodFilter").value;
+    const clearBtn = document.getElementById("procClearFiltersBtn");
+    if (clearBtn) clearBtn.style.display = (search || cf || mf) ? "inline-block" : "none";
+
+    const combos = processing.filter((r) => {
+      if (cf && r.country !== cf) return false;
+      if (mf && r.method !== mf) return false;
+      if (search && !String(r.site).toLowerCase().includes(search)) return false;
+      return true;
+    });
+
+    // Group filtered combos by site.
+    const bySite = new Map();
+    combos.forEach((r) => {
+      let g = bySite.get(r.site);
+      if (!g) { g = { site: r.site, countries: new Map(), methods: new Map(), orders: 0 }; bySite.set(r.site, g); }
+      g.orders += r.count || 0;
+      g.countries.set(r.country, (g.countries.get(r.country) || 0) + (r.count || 0));
+      g.methods.set(r.method, (g.methods.get(r.method) || 0) + (r.count || 0));
+    });
+    const list = Array.from(bySite.values()).sort((a, b) => b.orders - a.orders);
+
+    const intro = document.getElementById("procIntro");
+    if (processing.length === 0) intro.textContent = "";
+    else if (cf || mf) {
+      const parts = [];
+      if (cf) parts.push(`processing <b>${escapeHtml(countryLabel(cf))}</b>`);
+      if (mf) parts.push(`with <b>${escapeHtml(mf)}</b>`);
+      intro.innerHTML = `${list.length} site(s) ${parts.join(" ")}.`;
+    } else intro.innerHTML = `${list.length} site(s) across the uploaded orders.`;
+
+    document.getElementById("procEmpty").style.display = (processing.length === 0) ? "block" : "none";
+
+    const tbody = document.getElementById("procRows");
+    tbody.innerHTML = list.map((g) => {
+      const countryChips = Array.from(g.countries.entries()).sort((a, b) => b[1] - a[1])
+        .map(([c, n]) => `<span class="chip${cf && c === cf ? " hit" : ""}">${escapeHtml(countryLabel(c))} &middot; ${n}</span>`).join("");
+      const methodChips = Array.from(g.methods.entries()).sort((a, b) => b[1] - a[1])
+        .map(([m, n]) => `<span class="chip${mf && m === mf ? " hit" : ""}">${escapeHtml(m)} &middot; ${n}</span>`).join("");
+      return `<tr>
+        <td class="url"><a class="site-link" href="https://${escapeHtml(bareHost(g.site))}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${escapeHtml(g.site)}</a></td>
+        <td>${countryChips}</td>
+        <td>${methodChips}</td>
+        <td class="overlap-badge">${g.orders.toLocaleString()}</td>
+      </tr>`;
+    }).join("");
+    renderAllChrome();
+  }
+
+  async function handleProcessingImportFile(file) {
+    const status = document.getElementById("processingImportStatus");
+    status.style.color = ""; status.textContent = `Reading ${file.name}…`;
+    let rows;
+    try { rows = await rowsFromFile(file); }
+    catch (e) { status.style.color = "var(--bad)"; status.textContent = "Couldn't read the file: " + e.message + (/xls/i.test(file.name) ? " — try saving it as CSV." : ""); return; }
+    if (!rows || rows.length < 2) { status.style.color = "var(--bad)"; status.textContent = "That file has no data rows."; return; }
+
+    const header = (rows[0] || []).map((c) => String(c == null ? "" : c).trim().toLowerCase());
+    const find = (re) => header.findIndex((h) => re.test(h));
+    const ci = find(/card country|country|страна/);
+    const si = find(/wallet name|wallet|site|merchant|domain|url|сайт/);
+    const mi = find(/payment method|method|метод/);
+    const cui = find(/^cur$|currency|валют/);
+    if (ci === -1 || si === -1 || mi === -1) {
+      status.style.color = "var(--bad)";
+      status.textContent = "Need columns for Card Country, Wallet Name and Payment Method (headers not found).";
+      return;
+    }
+
+    // Aggregate the (possibly huge) order rows client-side into unique combos.
+    const combos = new Map();
+    let used = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const site = normDomain(r[si]);
+      const country = String(r[ci] == null ? "" : r[ci]).trim().toUpperCase();
+      const method = String(r[mi] == null ? "" : r[mi]).trim().toLowerCase();
+      const cur = cui !== -1 ? String(r[cui] == null ? "" : r[cui]).trim().toUpperCase() : "";
+      if (!site || !country || !method) continue;
+      const key = site + "|" + country + "|" + method;
+      let c = combos.get(key);
+      if (!c) { c = { site, country, method, currencies: new Set(), count: 0 }; combos.set(key, c); }
+      c.count++; if (cur) c.currencies.add(cur); used++;
+    }
+    if (!combos.size) { status.style.color = "var(--bad)"; status.textContent = "No valid rows found (need site + country + method)."; return; }
+
+    const payload = Array.from(combos.values()).map((c) => ({ site: c.site, country: c.country, method: c.method, currencies: Array.from(c.currencies), count: c.count }));
+    status.style.color = ""; status.textContent = `Uploading ${used.toLocaleString()} orders (${payload.length} combos)…`;
+    try {
+      const resp = await apiPost("/api/processing", { action: "import", rows: payload });
+      processing = resp.records || processing;
+      status.style.color = "var(--good)";
+      status.textContent = `Imported ${resp.addedOrders.toLocaleString()} orders — ${resp.newCombos} new site/country/method combos, ${resp.updatedCombos} updated.`;
+      renderProcessingTab();
+    } catch (e) { status.style.color = "var(--bad)"; status.textContent = "Upload failed: " + e.message; }
+  }
+
+  async function clearProcessing() {
+    if (!confirm("Delete ALL processing data? This cannot be undone.")) return;
+    const status = document.getElementById("processingImportStatus");
+    try {
+      const resp = await apiPost("/api/processing", { action: "clear" });
+      processing = resp.records || [];
+      status.style.color = ""; status.textContent = "Processing data cleared.";
+      renderProcessingTab();
+    } catch (e) { status.style.color = "var(--bad)"; status.textContent = "Clear failed: " + e.message; }
+  }
+
+  function exportProcessingCsv() {
+    const header = ["Site", "Country Code", "Country", "Payment Method", "Currencies", "Orders"];
+    const rows = [header];
+    processing.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).forEach((r) => {
+      rows.push([r.site, r.country, COUNTRY_NAMES[r.country] || "", r.method, (r.currencies || []).join("; "), r.count || 0]);
+    });
+    downloadCsv("processing_coverage.csv", rows);
+  }
+
   // ---------- Wiring ----------
   function wireStaticEvents() {
     document.querySelectorAll("nav.tabs button").forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
@@ -1006,6 +1190,16 @@
     document.getElementById("bulkLeadStopBtn").addEventListener("click", () => { bulkLeadCancelled = true; });
     document.getElementById("bulkLeadPaymentsBtn").addEventListener("click", bulkLeadRefreshPayments);
     document.getElementById("bulkLeadPaymentsStopBtn").addEventListener("click", () => { bulkLeadPayCancelled = true; });
+    document.getElementById("procSearch").addEventListener("input", renderProcessingTab);
+    document.getElementById("procCountryFilter").addEventListener("change", renderProcessingTab);
+    document.getElementById("procMethodFilter").addEventListener("change", renderProcessingTab);
+    document.getElementById("procClearFiltersBtn").addEventListener("click", clearProcFilters);
+    document.getElementById("exportProcessingBtn").addEventListener("click", exportProcessingCsv);
+    document.getElementById("importProcessingBtn").addEventListener("click", () => document.getElementById("importProcessingFile").click());
+    document.getElementById("importProcessingFile").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) handleProcessingImportFile(f);
+    });
+    document.getElementById("clearProcessingBtn").addEventListener("click", clearProcessing);
     document.getElementById("resetLink").addEventListener("click", async (e) => {
       e.preventDefault();
       alert("To reset to seed defaults on this deployment, clear the KV store from the Vercel dashboard (Storage tab) and reload — the server will reseed automatically on the next request.");

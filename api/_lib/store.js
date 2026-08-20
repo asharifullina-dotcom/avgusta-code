@@ -21,6 +21,7 @@ const kv = createClient({
 const MERCHANTS_KEY = 'merchants_v1';
 const PAYMENTS_KEY = 'payment_methods_v1';
 const LEADS_KEY = 'leads_v1';
+const PROCESSING_KEY = 'processing_v1';
 
 function uid(prefix) {
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -106,8 +107,18 @@ function collectionIO(name) {
   return { get: getMerchants, save: saveMerchants };
 }
 
+// Processing coverage: aggregated order data — one record per unique
+// (site, country, method) combo, accumulated across uploaded files.
+async function getProcessing() {
+  const data = await kv.get(PROCESSING_KEY);
+  return data || [];
+}
+async function saveProcessing(rows) {
+  await kv.set(PROCESSING_KEY, rows);
+}
+
 module.exports = {
   getMerchants, saveMerchants, getPaymentMethods, savePaymentMethods, uid,
-  getLeads, saveLeads, collectionIO,
+  getLeads, saveLeads, collectionIO, getProcessing, saveProcessing,
   normDomain, normName, merchantUrls, setMerchantUrls,
 };

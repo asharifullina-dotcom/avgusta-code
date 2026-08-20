@@ -161,6 +161,7 @@
     <button data-tab="payments">Payment Methods <span class="count" id="tabCountPayments"></span></button>
     <button data-tab="match">Match by Payment Method</button>
     <button data-tab="leads">Leads <span class="count" id="tabCountLeads"></span></button>
+    <button data-tab="processing">Processing <span class="count" id="tabCountProcessing"></span></button>
   </nav>
 
   <div id="loading" class="loading">Loading data&hellip;</div>
@@ -336,6 +337,43 @@
       <div id="leadEmpty" class="empty-state" style="display:none;">
         <div class="big">&#127793;</div>
         No leads yet &mdash; add site URLs above, or import a file / paste a list.
+      </div>
+    </div>
+  </section>
+
+  <!-- PROCESSING TAB -->
+  <section id="tab-processing" style="display:none;">
+    <div class="panel">
+      <div class="toolbar">
+        <span style="flex:1;color:var(--text-dim);font-size:12.5px;">Which site processes which countries &amp; methods &mdash; built from uploaded order reports. Use the country filter to find sites already processing a market.</span>
+        <button class="btn secondary small" id="exportProcessingBtn">&#11015; Export CSV</button>
+        <button class="btn small" id="importProcessingBtn">&#8681; Upload orders file</button>
+        <input type="file" id="importProcessingFile" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none;">
+        <button class="btn danger small" id="clearProcessingBtn">Clear all</button>
+      </div>
+      <div id="processingImportStatus" class="hint" style="margin:-4px 0 10px;"></div>
+      <div class="stat-row" id="processingStats" style="margin-bottom:14px;"></div>
+      <div class="toolbar">
+        <input type="text" id="procSearch" placeholder="Search site&hellip;" style="width:200px;">
+        <select id="procCountryFilter"><option value="">All countries</option></select>
+        <select id="procMethodFilter"><option value="">All methods</option></select>
+        <button class="btn secondary small" id="procClearFiltersBtn" style="display:none;">&times; Clear filter</button>
+      </div>
+      <div id="procIntro" class="hint" style="margin-bottom:10px;"></div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th style="width:24%">Site</th>
+            <th style="width:34%">Countries processed</th>
+            <th style="width:30%">Payment methods</th>
+            <th style="width:12%">Orders</th>
+          </tr></thead>
+          <tbody id="procRows"></tbody>
+        </table>
+      </div>
+      <div id="procEmpty" class="empty-state" style="display:none;">
+        <div class="big">&#128202;</div>
+        No processing data yet &mdash; upload an orders file (Card Country, Wallet Name, CUR, Payment Method).
       </div>
     </div>
   </section>
