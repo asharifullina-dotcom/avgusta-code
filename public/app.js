@@ -982,45 +982,55 @@
     return COUNTRY_NAMES[c] ? `${COUNTRY_NAMES[c]} (${c})` : c;
   }
 
+  const cardOf = (r) => r.cardCountry || r.country || ""; // legacy `country` = card country
+  const custOf = (r) => r.customerCountry || "";
+  function countryOptions(sel, values, allLabel) {
+    const cur = sel.value;
+    const list = Array.from(new Set(values.filter(Boolean))).sort((a, b) => countryLabel(a).localeCompare(countryLabel(b)));
+    sel.innerHTML = `<option value="">${allLabel}</option>` + list.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(countryLabel(c))}</option>`).join("");
+    sel.value = cur;
+  }
   function populateProcFilters() {
-    const cSel = document.getElementById("procCountryFilter");
+    countryOptions(document.getElementById("procCardCountryFilter"), processing.map(cardOf), "All card countries");
+    countryOptions(document.getElementById("procCustomerCountryFilter"), processing.map(custOf), "All customer countries");
     const mSel = document.getElementById("procMethodFilter");
-    const cCur = cSel.value, mCur = mSel.value;
-    const countries = Array.from(new Set(processing.map((r) => r.country))).sort((a, b) => countryLabel(a).localeCompare(countryLabel(b)));
+    const mCur = mSel.value;
     const methods = Array.from(new Set(processing.map((r) => r.method))).sort();
-    cSel.innerHTML = '<option value="">All countries</option>' + countries.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(countryLabel(c))}</option>`).join("");
     mSel.innerHTML = '<option value="">All methods</option>' + methods.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
-    cSel.value = cCur; mSel.value = mCur;
+    mSel.value = mCur;
   }
   function clearProcFilters() {
     document.getElementById("procSearch").value = "";
-    document.getElementById("procCountryFilter").value = "";
+    document.getElementById("procCardCountryFilter").value = "";
+    document.getElementById("procCustomerCountryFilter").value = "";
     document.getElementById("procMethodFilter").value = "";
     renderProcessingTab();
   }
   function renderProcessingStats() {
     const el = document.getElementById("processingStats");
     const sites = new Set(processing.map((r) => r.site));
-    const countries = new Set(processing.map((r) => r.country));
-    const methods = new Set(processing.map((r) => r.method));
+    const cardCountries = new Set(processing.map(cardOf).filter(Boolean));
+    const custCountries = new Set(processing.map(custOf).filter(Boolean));
     const orders = processing.reduce((s, r) => s + (r.count || 0), 0);
     el.innerHTML = `
       <div class="stat"><div class="n">${sites.size}</div><div class="l">Sites</div></div>
-      <div class="stat"><div class="n">${countries.size}</div><div class="l">Countries</div></div>
-      <div class="stat"><div class="n">${methods.size}</div><div class="l">Methods</div></div>
+      <div class="stat"><div class="n">${cardCountries.size}</div><div class="l">Card countries</div></div>
+      <div class="stat"><div class="n">${custCountries.size}</div><div class="l">Customer countries</div></div>
       <div class="stat"><div class="n">${orders.toLocaleString()}</div><div class="l">Orders</div></div>`;
   }
   function renderProcessingTab() {
     populateProcFilters();
     renderProcessingStats();
     const search = document.getElementById("procSearch").value.trim().toLowerCase();
-    const cf = document.getElementById("procCountryFilter").value;
+    const cardCf = document.getElementById("procCardCountryFilter").value;
+    const custCf = document.getElementById("procCustomerCountryFilter").value;
     const mf = document.getElementById("procMethodFilter").value;
     const clearBtn = document.getElementById("procClearFiltersBtn");
-    if (clearBtn) clearBtn.style.display = (search || cf || mf) ? "inline-block" : "none";
+    if (clearBtn) clearBtn.style.display = (search || cardCf || custCf || mf) ? "inline-block" : "none";
 
     const combos = processing.filter((r) => {
-      if (cf && r.country !== cf) return false;
+      if (cardCf && cardOf(r) !== cardCf) return false;
+      if (custCf && custOf(r) !== custCf) return false;
       if (mf && r.method !== mf) return false;
       if (search && !String(r.site).toLowerCase().includes(search)) return false;
       return true;
@@ -1030,33 +1040,40 @@
     const bySite = new Map();
     combos.forEach((r) => {
       let g = bySite.get(r.site);
-      if (!g) { g = { site: r.site, countries: new Map(), methods: new Map(), orders: 0 }; bySite.set(r.site, g); }
-      g.orders += r.count || 0;
-      g.countries.set(r.country, (g.countries.get(r.country) || 0) + (r.count || 0));
-      g.methods.set(r.method, (g.methods.get(r.method) || 0) + (r.count || 0));
+      if (!g) { g = { site: r.site, card: new Map(), cust: new Map(), methods: new Map(), orders: 0 }; bySite.set(r.site, g); }
+      const n = r.count || 0;
+      g.orders += n;
+      g.card.set(cardOf(r), (g.card.get(cardOf(r)) || 0) + n);
+      if (custOf(r)) g.cust.set(custOf(r), (g.cust.get(custOf(r)) || 0) + n);
+      g.methods.set(r.method, (g.methods.get(r.method) || 0) + n);
     });
     const list = Array.from(bySite.values()).sort((a, b) => b.orders - a.orders);
 
     const intro = document.getElementById("procIntro");
     if (processing.length === 0) intro.textContent = "";
-    else if (cf || mf) {
+    else {
       const parts = [];
-      if (cf) parts.push(`processing <b>${escapeHtml(countryLabel(cf))}</b>`);
-      if (mf) parts.push(`with <b>${escapeHtml(mf)}</b>`);
-      intro.innerHTML = `${list.length} site(s) ${parts.join(" ")}.`;
-    } else intro.innerHTML = `${list.length} site(s) across the uploaded orders.`;
+      if (cardCf) parts.push(`card <b>${escapeHtml(countryLabel(cardCf))}</b>`);
+      if (custCf) parts.push(`customer <b>${escapeHtml(countryLabel(custCf))}</b>`);
+      if (mf) parts.push(`method <b>${escapeHtml(mf)}</b>`);
+      intro.innerHTML = parts.length ? `${list.length} site(s) — ${parts.join(", ")}.` : `${list.length} site(s) across the uploaded orders.`;
+    }
 
     document.getElementById("procEmpty").style.display = (processing.length === 0) ? "block" : "none";
 
+    const chipsFrom = (map, active) => {
+      const entries = Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+      if (!entries.length) return `<span class="chip empty">&mdash;</span>`;
+      return entries.map(([c, n]) => `<span class="chip${active && c === active ? " hit" : ""}">${escapeHtml(countryLabel(c))} &middot; ${n}</span>`).join("");
+    };
     const tbody = document.getElementById("procRows");
     tbody.innerHTML = list.map((g) => {
-      const countryChips = Array.from(g.countries.entries()).sort((a, b) => b[1] - a[1])
-        .map(([c, n]) => `<span class="chip${cf && c === cf ? " hit" : ""}">${escapeHtml(countryLabel(c))} &middot; ${n}</span>`).join("");
       const methodChips = Array.from(g.methods.entries()).sort((a, b) => b[1] - a[1])
         .map(([m, n]) => `<span class="chip${mf && m === mf ? " hit" : ""}">${escapeHtml(m)} &middot; ${n}</span>`).join("");
       return `<tr>
         <td class="url"><a class="site-link" href="https://${escapeHtml(bareHost(g.site))}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${escapeHtml(g.site)}</a></td>
-        <td>${countryChips}</td>
+        <td>${chipsFrom(g.card, cardCf)}</td>
+        <td>${chipsFrom(g.cust, custCf)}</td>
         <td>${methodChips}</td>
         <td class="overlap-badge">${g.orders.toLocaleString()}</td>
       </tr>`;
@@ -1074,11 +1091,13 @@
 
     const header = (rows[0] || []).map((c) => String(c == null ? "" : c).trim().toLowerCase());
     const find = (re) => header.findIndex((h) => re.test(h));
-    const ci = find(/card country|country|страна/);
+    const custI = find(/customer\s*country|client\s*country|billing\s*country|страна\s*(клиент|покупател)/);
+    let cardI = find(/card\s*country/);
+    if (cardI === -1) cardI = header.findIndex((h, i) => i !== custI && /country|страна/.test(h));
     const si = find(/wallet name|wallet|site|merchant|domain|url|сайт/);
     const mi = find(/payment method|method|метод/);
     const cui = find(/^cur$|currency|валют/);
-    if (ci === -1 || si === -1 || mi === -1) {
+    if (cardI === -1 || si === -1 || mi === -1) {
       status.style.color = "var(--bad)";
       status.textContent = "Need columns for Card Country, Wallet Name and Payment Method (headers not found).";
       return;
@@ -1090,18 +1109,19 @@
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i];
       const site = normDomain(r[si]);
-      const country = String(r[ci] == null ? "" : r[ci]).trim().toUpperCase();
+      const cardCountry = String(r[cardI] == null ? "" : r[cardI]).trim().toUpperCase();
+      const customerCountry = custI !== -1 ? String(r[custI] == null ? "" : r[custI]).trim().toUpperCase() : "";
       const method = String(r[mi] == null ? "" : r[mi]).trim().toLowerCase();
       const cur = cui !== -1 ? String(r[cui] == null ? "" : r[cui]).trim().toUpperCase() : "";
-      if (!site || !country || !method) continue;
-      const key = site + "|" + country + "|" + method;
+      if (!site || !cardCountry || !method) continue;
+      const key = site + "|" + cardCountry + "|" + customerCountry + "|" + method;
       let c = combos.get(key);
-      if (!c) { c = { site, country, method, currencies: new Set(), count: 0 }; combos.set(key, c); }
+      if (!c) { c = { site, cardCountry, customerCountry, method, currencies: new Set(), count: 0 }; combos.set(key, c); }
       c.count++; if (cur) c.currencies.add(cur); used++;
     }
-    if (!combos.size) { status.style.color = "var(--bad)"; status.textContent = "No valid rows found (need site + country + method)."; return; }
+    if (!combos.size) { status.style.color = "var(--bad)"; status.textContent = "No valid rows found (need site + card country + method)."; return; }
 
-    const payload = Array.from(combos.values()).map((c) => ({ site: c.site, country: c.country, method: c.method, currencies: Array.from(c.currencies), count: c.count }));
+    const payload = Array.from(combos.values()).map((c) => ({ site: c.site, cardCountry: c.cardCountry, customerCountry: c.customerCountry, method: c.method, currencies: Array.from(c.currencies), count: c.count }));
     status.style.color = ""; status.textContent = `Uploading ${used.toLocaleString()} orders (${payload.length} combos)…`;
     try {
       const resp = await apiPost("/api/processing", { action: "import", rows: payload });
@@ -1124,10 +1144,11 @@
   }
 
   function exportProcessingCsv() {
-    const header = ["Site", "Country Code", "Country", "Payment Method", "Currencies", "Orders"];
+    const header = ["Site", "Card Country Code", "Card Country", "Customer Country Code", "Customer Country", "Payment Method", "Currencies", "Orders"];
     const rows = [header];
     processing.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).forEach((r) => {
-      rows.push([r.site, r.country, COUNTRY_NAMES[r.country] || "", r.method, (r.currencies || []).join("; "), r.count || 0]);
+      const card = cardOf(r), cust = custOf(r);
+      rows.push([r.site, card, COUNTRY_NAMES[card] || "", cust, COUNTRY_NAMES[cust] || "", r.method, (r.currencies || []).join("; "), r.count || 0]);
     });
     downloadCsv("processing_coverage.csv", rows);
   }
@@ -1191,7 +1212,8 @@
     document.getElementById("bulkLeadPaymentsBtn").addEventListener("click", bulkLeadRefreshPayments);
     document.getElementById("bulkLeadPaymentsStopBtn").addEventListener("click", () => { bulkLeadPayCancelled = true; });
     document.getElementById("procSearch").addEventListener("input", renderProcessingTab);
-    document.getElementById("procCountryFilter").addEventListener("change", renderProcessingTab);
+    document.getElementById("procCardCountryFilter").addEventListener("change", renderProcessingTab);
+    document.getElementById("procCustomerCountryFilter").addEventListener("change", renderProcessingTab);
     document.getElementById("procMethodFilter").addEventListener("change", renderProcessingTab);
     document.getElementById("procClearFiltersBtn").addEventListener("click", clearProcFilters);
     document.getElementById("exportProcessingBtn").addEventListener("click", exportProcessingCsv);

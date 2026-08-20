@@ -3,8 +3,9 @@ const { getProcessing, saveProcessing, normDomain } = require('./_lib/store');
 // Processing coverage = which site processes which country with which method,
 // aggregated from uploaded order reports. One stored record per unique
 // (site, country, method); repeated uploads accumulate order counts.
-const keyOf = (site, country, method) =>
-  normDomain(site) + '|' + String(country || '').trim().toUpperCase() + '|' + String(method || '').trim().toLowerCase();
+const up = (v) => String(v || '').trim().toUpperCase();
+const keyOf = (site, cardCountry, customerCountry, method) =>
+  normDomain(site) + '|' + up(cardCountry) + '|' + up(customerCountry) + '|' + String(method || '').trim().toLowerCase();
 
 module.exports = async (req, res) => {
   try {
@@ -23,22 +24,24 @@ module.exports = async (req, res) => {
       if (body.action === 'import' && Array.isArray(body.rows)) {
         const records = await getProcessing();
         const index = new Map();
-        records.forEach((r) => index.set(keyOf(r.site, r.country, r.method), r));
+        // `country` is the legacy field name for card country (back-compat).
+        records.forEach((r) => index.set(keyOf(r.site, r.cardCountry || r.country, r.customerCountry, r.method), r));
 
         let newCombos = 0, updatedCombos = 0, addedOrders = 0, skipped = 0;
 
         for (const raw of body.rows) {
           const site = normDomain((raw && raw.site) || '');
-          const country = String((raw && raw.country) || '').trim().toUpperCase();
+          const cardCountry = up((raw && (raw.cardCountry || raw.country)));
+          const customerCountry = up((raw && raw.customerCountry));
           const method = String((raw && raw.method) || '').trim().toLowerCase();
           const count = Math.max(1, parseInt((raw && raw.count), 10) || 1);
           const currencies = Array.isArray(raw && raw.currencies) ? raw.currencies : (raw && raw.currency ? [raw.currency] : []);
-          if (!site || !country || !method) { skipped++; continue; }
+          if (!site || !cardCountry || !method) { skipped++; continue; }
 
-          const k = keyOf(site, country, method);
+          const k = keyOf(site, cardCountry, customerCountry, method);
           let rec = index.get(k);
           if (!rec) {
-            rec = { site, country, method, currencies: [], count: 0 };
+            rec = { site, cardCountry, customerCountry, method, currencies: [], count: 0 };
             index.set(k, rec);
             records.push(rec);
             newCombos++;

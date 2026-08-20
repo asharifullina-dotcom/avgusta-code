@@ -354,8 +354,9 @@
       <div id="processingImportStatus" class="hint" style="margin:-4px 0 10px;"></div>
       <div class="stat-row" id="processingStats" style="margin-bottom:14px;"></div>
       <div class="toolbar">
-        <input type="text" id="procSearch" placeholder="Search site&hellip;" style="width:200px;">
-        <select id="procCountryFilter"><option value="">All countries</option></select>
+        <input type="text" id="procSearch" placeholder="Search site&hellip;" style="width:180px;">
+        <select id="procCardCountryFilter"><option value="">All card countries</option></select>
+        <select id="procCustomerCountryFilter"><option value="">All customer countries</option></select>
         <select id="procMethodFilter"><option value="">All methods</option></select>
         <button class="btn secondary small" id="procClearFiltersBtn" style="display:none;">&times; Clear filter</button>
       </div>
@@ -363,10 +364,11 @@
       <div style="overflow-x:auto;">
         <table>
           <thead><tr>
-            <th style="width:24%">Site</th>
-            <th style="width:34%">Countries processed</th>
-            <th style="width:30%">Payment methods</th>
-            <th style="width:12%">Orders</th>
+            <th style="width:20%">Site</th>
+            <th style="width:24%">Card country</th>
+            <th style="width:24%">Customer country</th>
+            <th style="width:22%">Payment methods</th>
+            <th style="width:10%">Orders</th>
           </tr></thead>
           <tbody id="procRows"></tbody>
         </table>
