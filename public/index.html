@@ -9,27 +9,28 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    /* Unlimit dark palette: near-black + signature lime->cyan gradient */
-    --bg:#0A0D0C;
-    --panel:#121817;
-    --panel-2:#1A2220;
-    --border:#28322F;
-    --text:#EAF2EE;
-    --text-dim:#93A5A0;
-    --text-faint:#5F706B;
-    --accent:#C9F73A;                       /* lime (solid, readable on dark) */
-    --accent-2:#2FE0D8;                     /* cyan */
-    --accent-soft:rgba(201,247,58,0.15);
-    --accent-strong:#D6FB4B;
-    --accent-ink:#C9F73A;                   /* text accent on dark */
-    --grad:linear-gradient(115deg,#D6FB4B 0%,#7DEBA6 46%,#33DCE6 100%);
-    --teal:#2FE0D8;                         /* cyan highlight */
-    --teal-soft:rgba(47,224,216,0.14);
-    --bad:#F07A5A;
-    --bad-soft:rgba(240,122,90,0.15);
-    --good:#7CE0A0;
-    --radius:12px;
+    /* Original dark theme + a touch of the Unlimit lime->cyan gradient (--grad) */
+    --bg:#0E1512;
+    --panel:#141C19;
+    --panel-2:#182420;
+    --border:#26362F;
+    --text:#E7ECE9;
+    --text-dim:#8FA69C;
+    --text-faint:#5E7369;
+    --accent:#D4A54A;
+    --accent-soft:rgba(212,165,74,0.14);
+    --accent-strong:#EAC06A;
+    --accent-ink:#EAC06A;                    /* text accents = gold */
+    --teal:#4FA3A0;
+    --teal-soft:rgba(79,163,160,0.16);
+    --bad:#C1673A;
+    --bad-soft:rgba(193,103,58,0.16);
+    --good:#6FBF8B;
+    --grad:linear-gradient(115deg,#D6FB4B 0%,#7DEBA6 46%,#33DCE6 100%); /* Unlimit accent, used sparingly */
+    --radius:10px;
   }
+  /* Little bit of new: thin Unlimit gradient strip across the very top */
+  body::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;background:var(--grad);z-index:100;}
   *{box-sizing:border-box;}
   body{
     margin:0;
@@ -42,22 +43,18 @@
   .mono{font-family:'IBM Plex Mono','SFMono-Regular',ui-monospace,Menlo,monospace;}
   .app{max-width:1180px;margin:0 auto;padding:28px 24px 60px;}
 
-  /* Header — brand gradient hero with black text */
-  header.top{
-    display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px;flex-wrap:wrap;
-    background:var(--grad);border-radius:18px;padding:24px 26px;color:#07100C;
-  }
-  .brand-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(7,16,12,.62);margin:0 0 6px;}
-  header.top h1{font-size:24px;margin:0 0 4px;font-weight:750;letter-spacing:-.015em;color:#07100C;}
+  /* Header */
+  header.top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:18px;flex-wrap:wrap;}
+  .brand-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink);margin:0 0 6px;}
   h1{font-size:22px;margin:0 0 4px;font-weight:650;letter-spacing:-.01em;}
-  .sub{color:rgba(7,16,12,.74);font-size:13px;margin:0;max-width:560px;}
+  .sub{color:var(--text-dim);font-size:13px;margin:0;max-width:560px;}
   .stat-row{display:flex;gap:10px;flex-wrap:wrap;}
   .stat{
-    background:rgba(255,255,255,.86);border:1px solid rgba(7,16,12,.08);border-radius:var(--radius);
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
     padding:9px 14px;min-width:92px;text-align:center;
   }
-  .stat .n{font-family:'IBM Plex Mono',monospace;font-size:18px;color:#07100C;font-weight:700;}
-  .stat .l{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:rgba(7,16,12,.62);margin-top:2px;}
+  .stat .n{font-family:'IBM Plex Mono',monospace;font-size:18px;color:var(--accent-ink);font-weight:700;}
+  .stat .l{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);margin-top:2px;}
 
   /* Ticker */
   .ticker{
@@ -95,13 +92,12 @@
   }
   input[type=text]:focus, select:focus, textarea:focus{outline:1px solid var(--accent);border-color:var(--accent);}
   .btn{
-    background:var(--grad);color:#07100C;border:none;border-radius:8px;padding:8px 14px;
-    font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:filter .12s,transform .12s;
+    background:var(--accent);color:#1B140A;border:none;border-radius:7px;padding:8px 14px;
+    font-size:13px;font-weight:650;cursor:pointer;font-family:inherit;
   }
-  .btn:hover{filter:brightness(1.08);}
-  .btn:active{transform:translateY(1px);}
-  .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text);font-weight:600;}
-  .btn.secondary:hover{border-color:var(--accent);color:#fff;background:rgba(255,255,255,.03);}
+  .btn:hover{background:var(--accent-strong);}
+  .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text);}
+  .btn.secondary:hover{border-color:var(--text-dim);}
   .btn.danger{background:transparent;border:1px solid var(--bad);color:var(--bad);padding:5px 9px;font-size:12px;}
   .btn.small{padding:5px 10px;font-size:12px;}
 
