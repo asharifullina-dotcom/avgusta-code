@@ -78,8 +78,12 @@ async function getPaymentTechnologies(domain) {
     if (t.sub.toLowerCase() === 'payment currency') return false;
     // Similarweb groups card networks, wallets, PSPs under "Payment & Currencies".
     if (t.category.toLowerCase().includes('payment')) return true;
-    // Fallback: match well-known PSP/gateway names anywhere in the tech list.
-    return PAYMENT_TECH_KEYWORDS.some((kw) => t.name.toLowerCase().includes(kw));
+    // Fallback: match well-known PSP/gateway names as whole words (so the keyword
+    // "pix" matches the payment method "PIX" but NOT "Facebook Pixel").
+    return PAYMENT_TECH_KEYWORDS.some((kw) => {
+      const re = new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+      return re.test(t.name);
+    });
   };
 
   const names = items.filter(isPayment).map((t) => t.name);
