@@ -1,26 +1,19 @@
 // Thin wrapper around Similarweb's REST API.
 //
-// IMPORTANT — please read:
-// I don't have your exact Similarweb API plan's documented endpoint paths/response
-// shapes in front of me (these differ by product tier and change over time), so the
-// two URLs below are my best-effort guess at Similarweb's standard "Digital Rank API"
-// pattern. Before relying on this in production, log into your Similarweb account,
-// open their API docs / Postman collection, and confirm:
-//   1. The exact path for "traffic by country" for a domain
-//   2. The exact path for "website technologies" for a domain
-//   3. Whether countries come back as names or numeric codes (if codes, you'll need
-//      a country-code lookup table — ask me and I'll add one once you tell me the
-//      format you're seeing)
-// Adjust SIMILARWEB_ENDPOINTS below to match; everything else in this project stays
-// the same.
+// Both endpoints below were verified against Similarweb's live API and their
+// developer docs (https://developers.similarweb.com/reference/website-technologies):
+//   1. "traffic by country" -> v1 Web Traffic API. Countries come back as names
+//      (not numeric codes) and shares as fractions (0..1).
+//   2. "website technologies" -> v4 technographics API. Payment providers appear
+//      under the category "Payment & Currencies" (e.g. PayPal, MasterCard).
 
 const SIMILARWEB_ENDPOINTS = {
   trafficByCountry: (domain) =>
     `https://api.similarweb.com/v1/website/${encodeURIComponent(domain)}/geo/traffic-by-country` +
     `?api_key=${process.env.SIMILARWEB_API_KEY}&main_domain_only=false`,
   technologies: (domain) =>
-    `https://api.similarweb.com/v1/website/${encodeURIComponent(domain)}/technology/tags` +
-    `?api_key=${process.env.SIMILARWEB_API_KEY}`,
+    `https://api.similarweb.com/v4/website/${encodeURIComponent(domain)}/technographics/all` +
+    `?api_key=${process.env.SIMILARWEB_API_KEY}&format=json&limit=500`,
 };
 
 async function fetchJson(url) {
@@ -65,11 +58,32 @@ async function getPaymentTechnologies(domain) {
     throw new Error('SIMILARWEB_API_KEY is not set — add it in Vercel project Settings → Environment Variables.');
   }
   const data = await fetchJson(SIMILARWEB_ENDPOINTS.technologies(domain));
-  const techList = data.technologies || data.tags || data.records || [];
-  const names = techList.map((t) => (typeof t === 'string' ? t : t.name || t.tag || '')).filter(Boolean);
-  return names.filter((name) =>
-    PAYMENT_TECH_KEYWORDS.some((kw) => name.toLowerCase().includes(kw))
-  );
+  // v4 technographics returns { technologies: [...] }; be tolerant of shape variants.
+  const techList = data.technologies || data.data || data.records || [];
+  const items = techList
+    .map((t) => {
+      if (typeof t === 'string') return { name: t, category: '', sub: '', status: 'installed' };
+      return {
+        name: t.technology_name || t.technology || t.name || t.tag || '',
+        category: String(t.category || ''),
+        sub: String(t.sub_category || ''),
+        status: String(t.status || 'installed').toLowerCase(),
+      };
+    })
+    // Drop technologies Similarweb marks as no longer present on the site.
+    .filter((t) => t.name && t.status !== 'removed');
+
+  const isPayment = (t) => {
+    // Currency-symbol markers (€/$ on the page) aren't a payment method — skip them.
+    if (t.sub.toLowerCase() === 'payment currency') return false;
+    // Similarweb groups card networks, wallets, PSPs under "Payment & Currencies".
+    if (t.category.toLowerCase().includes('payment')) return true;
+    // Fallback: match well-known PSP/gateway names anywhere in the tech list.
+    return PAYMENT_TECH_KEYWORDS.some((kw) => t.name.toLowerCase().includes(kw));
+  };
+
+  const names = items.filter(isPayment).map((t) => t.name);
+  return Array.from(new Set(names)); // de-dupe
 }
 
 module.exports = { getTopCountries, getPaymentTechnologies };
