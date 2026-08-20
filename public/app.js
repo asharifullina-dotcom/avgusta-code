@@ -1,6 +1,7 @@
 (function () {
   let merchants = [];
   let paymentMethods = [];
+  let leads = [];
   let activeTab = "merchants";
 
   async function apiGet(path) {
@@ -21,9 +22,10 @@
   }
 
   async function loadAll() {
-    [merchants, paymentMethods] = await Promise.all([
+    [merchants, paymentMethods, leads] = await Promise.all([
       apiGet("/api/merchants"),
       apiGet("/api/payment-methods"),
+      apiGet("/api/leads"),
     ]);
   }
 
@@ -108,18 +110,20 @@
     renderTicker();
     document.getElementById("tabCountMerchants").textContent = merchants.length;
     document.getElementById("tabCountPayments").textContent = paymentMethods.length;
+    document.getElementById("tabCountLeads").textContent = leads.length;
   }
 
   // ---------- Tabs ----------
   function switchTab(tab) {
     activeTab = tab;
     document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-    ["merchants", "payments", "match"].forEach((t) => {
+    ["merchants", "payments", "match", "leads"].forEach((t) => {
       document.getElementById("tab-" + t).style.display = t === tab ? "block" : "none";
     });
     if (tab === "merchants") renderMerchantsTab();
     if (tab === "payments") renderPaymentsTab();
     if (tab === "match") renderMatchTab();
+    if (tab === "leads") renderLeadsTab();
   }
 
   // ---------- Merchants tab ----------
@@ -653,6 +657,14 @@
     return { ci, ui, dataRows: hasHeader ? rows.slice(1) : rows };
   }
 
+  // For lead imports (URL-only): find the URL column, else use the first column.
+  function pickUrlColumn(rows) {
+    const first = (rows[0] || []).map((c) => String(c == null ? "" : c).trim().toLowerCase());
+    let ui = first.findIndex((h) => /url|site|website|domain|link|сайт|домен|ссылк|адрес/.test(h));
+    const hasHeader = ui !== -1;
+    if (ui === -1) ui = 0;
+    return { ui, dataRows: hasHeader ? rows.slice(1) : rows };
+  }
   function normDomain(u) {
     return String(u || "").trim().toLowerCase()
       .replace(/^https?:\/\//, "").replace(/^www\./, "")
@@ -729,6 +741,213 @@
     }
   }
 
+  // ---------- Leads tab (prospect sites, URL only) ----------
+  function populateLeadCountryFilter() {
+    const sel = document.getElementById("leadCountryFilter");
+    const cur = sel.value;
+    const set = new Set();
+    leads.forEach((l) => (l.countries || []).forEach((c) => { if (c) set.add(c); }));
+    sel.innerHTML = '<option value="">All countries</option>' +
+      Array.from(set).sort().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+    sel.value = cur;
+  }
+  function clearLeadFilters() {
+    document.getElementById("leadSearch").value = "";
+    document.getElementById("leadCountryFilter").value = "";
+    renderLeadsTab();
+  }
+  function renderLeadsTab() {
+    populateLeadCountryFilter();
+    const search = document.getElementById("leadSearch").value.trim().toLowerCase();
+    const cf = document.getElementById("leadCountryFilter").value;
+    const clearBtn = document.getElementById("leadClearFiltersBtn");
+    if (clearBtn) clearBtn.style.display = (search || cf) ? "inline-block" : "none";
+
+    const list = leads.filter((l) => {
+      if (search && !String(l.url || "").toLowerCase().includes(search)) return false;
+      if (cf && !(l.countries || []).includes(cf)) return false;
+      return true;
+    });
+
+    const tbody = document.getElementById("leadRows");
+    document.getElementById("leadEmpty").style.display = list.length ? "none" : "block";
+    tbody.innerHTML = list.map((l) => {
+      const countriesHtml = (l.countries && l.countries.length)
+        ? l.countries.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")
+        : `<span class="chip empty">${escapeHtml(l.countriesNote || "Insufficient data")}</span>`;
+      const sourceTag = l.countriesSource === "similarweb"
+        ? `<div class="hint">via Similarweb${l.countriesUpdatedAt ? ", " + new Date(l.countriesUpdatedAt).toLocaleDateString() : ""}</div>` : "";
+      const paymentsHtml = (l.paymentMethodsOnSite && l.paymentMethodsOnSite.length)
+        ? l.paymentMethodsOnSite.map((p) => `<span class="chip">${escapeHtml(p)}</span>`).join("")
+        : `<span class="chip empty">${l.paymentMethodsUpdatedAt ? "None found" : "Not checked"}</span>`;
+      const paymentsTag = l.paymentMethodsUpdatedAt
+        ? `<div class="hint">checked ${new Date(l.paymentMethodsUpdatedAt).toLocaleDateString()}</div>` : "";
+      return `<tr data-id="${l.id}">
+        <td class="url"><a class="site-link" href="https://${escapeHtml(bareHost(l.url))}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${escapeHtml(l.url)}</a></td>
+        <td>${countriesHtml}${sourceTag}
+          <button class="btn secondary small lead-refresh-countries" style="margin-top:6px;">&#127760; Similarweb</button></td>
+        <td>${paymentsHtml}${paymentsTag}
+          <button class="btn secondary small lead-refresh-payments" style="margin-top:6px;">&#128179; Check</button></td>
+        <td><button class="btn danger lead-delete">Delete</button></td>
+      </tr>`;
+    }).join("");
+
+    tbody.querySelectorAll(".lead-delete").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        const id = e.target.closest("tr").dataset.id;
+        if (!confirm("Remove this lead?")) return;
+        leads = await apiPost("/api/leads", { action: "delete", id });
+        renderLeadsTab(); renderAllChrome();
+      });
+    });
+    tbody.querySelectorAll(".lead-refresh-countries").forEach((btn) => {
+      btn.addEventListener("click", (e) => refreshLeadCountries(e.target.closest("tr").dataset.id, e.target));
+    });
+    tbody.querySelectorAll(".lead-refresh-payments").forEach((btn) => {
+      btn.addEventListener("click", (e) => refreshLeadPayments(e.target.closest("tr").dataset.id, e.target));
+    });
+    renderAllChrome();
+  }
+
+  async function refreshLeadCountries(id, btn) {
+    const o = btn.textContent; btn.disabled = true; btn.textContent = "…";
+    try {
+      const u = await apiPost("/api/refresh-countries", { id, collection: "leads" });
+      leads = leads.map((x) => (x.id === id ? u : x));
+      renderLeadsTab();
+    } catch (e) { alert("Couldn't refresh from Similarweb: " + e.message); btn.disabled = false; btn.textContent = o; }
+  }
+  async function refreshLeadPayments(id, btn) {
+    const o = btn.textContent; btn.disabled = true; btn.textContent = "…";
+    try {
+      const u = await apiPost("/api/check-payments", { id, collection: "leads" });
+      leads = leads.map((x) => (x.id === id ? u : x));
+      renderLeadsTab();
+    } catch (e) { alert("Couldn't check payment methods: " + e.message); btn.disabled = false; btn.textContent = o; }
+  }
+
+  let bulkLeadCancelled = false;
+  async function bulkLeadRefreshCountries() {
+    bulkLeadCancelled = false;
+    const targets = leads.filter((l) => !(l.countries || []).length);
+    const status = document.getElementById("bulkLeadStatus");
+    const b = document.getElementById("bulkLeadRefreshBtn"), s = document.getElementById("bulkLeadStopBtn");
+    if (!targets.length) { status.textContent = "Nothing to refresh — every lead already has countries."; return; }
+    b.disabled = true; s.style.display = "inline-block";
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkLeadCancelled) break;
+      const l = targets[i];
+      status.textContent = `Refreshing ${i + 1}/${targets.length}: ${l.url}…`;
+      try { const u = await apiPost("/api/refresh-countries", { id: l.id, collection: "leads" }); leads = leads.map((x) => (x.id === l.id ? u : x)); renderLeadsTab(); }
+      catch (e) { console.error("bulk lead refresh failed", l.url, e); }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    status.textContent = bulkLeadCancelled ? `Stopped after some of ${targets.length}.` : `Done — checked ${targets.length} leads with Similarweb.`;
+    b.disabled = false; s.style.display = "none";
+  }
+  let bulkLeadPayCancelled = false;
+  async function bulkLeadRefreshPayments() {
+    bulkLeadPayCancelled = false;
+    const targets = leads.filter((l) => !l.paymentMethodsOnSite || l.paymentMethodsOnSite.length === 0);
+    const status = document.getElementById("bulkLeadPaymentsStatus");
+    const b = document.getElementById("bulkLeadPaymentsBtn"), s = document.getElementById("bulkLeadPaymentsStopBtn");
+    if (!targets.length) { status.textContent = "Nothing to check — every lead already has a result."; return; }
+    b.disabled = true; s.style.display = "inline-block";
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkLeadPayCancelled) break;
+      const l = targets[i];
+      status.textContent = `Checking ${i + 1}/${targets.length}: ${l.url}…`;
+      try { const u = await apiPost("/api/check-payments", { id: l.id, collection: "leads" }); leads = leads.map((x) => (x.id === l.id ? u : x)); renderLeadsTab(); }
+      catch (e) { console.error("bulk lead payment check failed", l.url, e); }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    status.textContent = bulkLeadPayCancelled ? `Stopped after some of ${targets.length}.` : `Done — checked ${targets.length} leads for payment technologies.`;
+    b.disabled = false; s.style.display = "none";
+  }
+
+  async function addLeadsFromInput() {
+    const input = document.getElementById("leadAddInput");
+    const urls = input.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    const status = document.getElementById("leadImportStatus");
+    if (!urls.length) { status.style.color = "var(--bad)"; status.textContent = "Enter at least one site URL."; return; }
+    try {
+      const resp = await apiPost("/api/leads", { action: "add", url: urls });
+      leads = resp.leads || leads; input.value = "";
+      status.style.color = "var(--good)";
+      status.textContent = `Added ${resp.added}, skipped ${resp.skippedDuplicates} duplicate(s)` + (resp.skippedInvalid ? `, ${resp.skippedInvalid} invalid` : "") + ".";
+      renderLeadsTab();
+    } catch (e) { status.style.color = "var(--bad)"; status.textContent = "Add failed: " + e.message; }
+  }
+
+  async function handleLeadImportFile(file) {
+    const status = document.getElementById("leadImportStatus");
+    status.style.color = ""; status.textContent = `Reading ${file.name}…`;
+    let rows;
+    try { rows = await rowsFromFile(file); }
+    catch (e) { status.style.color = "var(--bad)"; status.textContent = "Couldn't read the file: " + e.message + (/xls/i.test(file.name) ? " — try saving it as CSV." : ""); return; }
+    if (!rows || !rows.length) { status.style.color = "var(--bad)"; status.textContent = "That file looks empty."; return; }
+    const { ui, dataRows } = pickUrlColumn(rows);
+    const urls = dataRows.map((r) => String(r[ui] == null ? "" : r[ui]).trim()).filter(Boolean);
+    if (!urls.length) { status.style.color = "var(--bad)"; status.textContent = "No site URLs found in that file."; return; }
+
+    const existing = new Set(leads.map((l) => normDomain(l.url)));
+    const batch = new Set();
+    let nw = 0, dup = 0;
+    urls.forEach((u) => { const d = normDomain(u); if (existing.has(d) || batch.has(d)) dup++; else { batch.add(d); nw++; } });
+    if (!nw) { status.style.color = "var(--bad)"; status.textContent = `Nothing new in ${file.name} (all ${urls.length} already leads).`; return; }
+    if (!confirm(`Import from "${file.name}":\n\n• ${nw} new lead(s) will be added\n• ${dup} duplicate(s) skipped\n\nProceed?`)) { status.textContent = ""; return; }
+
+    status.style.color = ""; status.textContent = "Importing…";
+    try {
+      const resp = await apiPost("/api/leads", { action: "importMany", urls });
+      leads = resp.leads || leads;
+      status.style.color = "var(--good)";
+      status.textContent = `Added ${resp.added}, skipped ${resp.skippedDuplicates} duplicate(s)` + (resp.skippedInvalid ? `, ${resp.skippedInvalid} invalid` : "") + ".";
+      renderLeadsTab();
+    } catch (e) { status.style.color = "var(--bad)"; status.textContent = "Import failed: " + e.message; }
+  }
+
+  function wireBulkLeadsForm() {
+    const wrap = document.getElementById("bulkLeadsWrap");
+    wrap.innerHTML = `
+      <form class="add-form" id="bulkLeadsForm" style="grid-template-columns:1fr;">
+        <div class="full"><label>Paste one site per line</label>
+          <textarea name="urls" style="min-height:120px;" placeholder="shop.com&#10;store.io&#10;example.net"></textarea>
+          <div class="hint">Duplicates (same domain, case-insensitive) are skipped.</div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn secondary small" id="cancelBulkLeads">Cancel</button>
+          <button type="submit" class="btn small">Add these</button>
+        </div>
+      </form>`;
+    wrap.style.display = "block";
+    document.getElementById("cancelBulkLeads").addEventListener("click", () => { wrap.style.display = "none"; wrap.innerHTML = ""; });
+    document.getElementById("bulkLeadsForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const urls = (new FormData(e.target).get("urls") || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const status = document.getElementById("leadImportStatus");
+      if (!urls.length) { status.style.color = "var(--bad)"; status.textContent = "No URLs entered."; return; }
+      status.style.color = ""; status.textContent = `Adding ${urls.length}…`;
+      try {
+        const resp = await apiPost("/api/leads", { action: "importMany", urls });
+        leads = resp.leads || leads;
+        status.style.color = "var(--good)";
+        status.textContent = `Added ${resp.added}, skipped ${resp.skippedDuplicates} duplicate(s)` + (resp.skippedInvalid ? `, ${resp.skippedInvalid} invalid` : "") + ".";
+        wrap.style.display = "none"; wrap.innerHTML = ""; renderLeadsTab();
+      } catch (err) { status.style.color = "var(--bad)"; status.textContent = "Bulk add failed: " + err.message; }
+    });
+  }
+
+  function exportLeadsCsv() {
+    const header = ["Site", "Country 1", "Country 2", "Country 3", "Country 4", "Country 5", "Countries Source", "Countries Updated At", "Payment Methods On Site", "Payment Methods Updated At"];
+    const rows = [header];
+    leads.forEach((l) => {
+      const c = l.countries || [];
+      rows.push([l.url, c[0] || "", c[1] || "", c[2] || "", c[3] || "", c[4] || "", l.countriesSource || "", l.countriesUpdatedAt || "", (l.paymentMethodsOnSite || []).join("; "), l.paymentMethodsUpdatedAt || ""]);
+    });
+    downloadCsv("leads_export.csv", rows);
+  }
+
   // ---------- Wiring ----------
   function wireStaticEvents() {
     document.querySelectorAll("nav.tabs button").forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
@@ -769,6 +988,24 @@
     });
     document.getElementById("customPmFindBtn").addEventListener("click", () => { commitPendingCountryInput(); renderMatchTab(); });
     document.getElementById("customPmSaveBtn").addEventListener("click", saveCustomAsPaymentMethod);
+    document.getElementById("leadSearch").addEventListener("input", renderLeadsTab);
+    document.getElementById("leadCountryFilter").addEventListener("change", renderLeadsTab);
+    document.getElementById("leadClearFiltersBtn").addEventListener("click", clearLeadFilters);
+    document.getElementById("exportLeadsBtn").addEventListener("click", exportLeadsCsv);
+    document.getElementById("importLeadsBtn").addEventListener("click", () => document.getElementById("importLeadsFile").click());
+    document.getElementById("importLeadsFile").addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) handleLeadImportFile(f);
+    });
+    document.getElementById("toggleBulkLeads").addEventListener("click", () => {
+      const w = document.getElementById("bulkLeadsWrap");
+      if (w.style.display === "block") { w.style.display = "none"; w.innerHTML = ""; } else wireBulkLeadsForm();
+    });
+    document.getElementById("leadAddBtn").addEventListener("click", addLeadsFromInput);
+    document.getElementById("leadAddInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addLeadsFromInput(); } });
+    document.getElementById("bulkLeadRefreshBtn").addEventListener("click", bulkLeadRefreshCountries);
+    document.getElementById("bulkLeadStopBtn").addEventListener("click", () => { bulkLeadCancelled = true; });
+    document.getElementById("bulkLeadPaymentsBtn").addEventListener("click", bulkLeadRefreshPayments);
+    document.getElementById("bulkLeadPaymentsStopBtn").addEventListener("click", () => { bulkLeadPayCancelled = true; });
     document.getElementById("resetLink").addEventListener("click", async (e) => {
       e.preventDefault();
       alert("To reset to seed defaults on this deployment, clear the KV store from the Vercel dashboard (Storage tab) and reload — the server will reseed automatically on the next request.");

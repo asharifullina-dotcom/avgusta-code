@@ -1,4 +1,4 @@
-const { getMerchants, saveMerchants, merchantUrls } = require('./_lib/store');
+const { collectionIO, merchantUrls } = require('./_lib/store');
 const { getTopCountries } = require('./_lib/similarweb');
 
 function domainOf(url) {
@@ -11,12 +11,13 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: 'Method not allowed' });
   }
   try {
-    const { id } = req.body || {};
-    if (!id) return res.status(400).json({ error: 'Missing merchant id' });
+    const { id, collection } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'Missing record id' });
 
-    const merchants = await getMerchants();
+    const { get, save } = collectionIO(collection);
+    const merchants = await get();
     const merchant = merchants.find((m) => m.id === id);
-    if (!merchant) return res.status(404).json({ error: 'Merchant not found' });
+    if (!merchant) return res.status(404).json({ error: 'Record not found' });
 
     const urls = merchantUrls(merchant);
     if (!urls.length) return res.status(400).json({ error: 'Merchant has no site URL' });
@@ -44,7 +45,7 @@ module.exports = async (req, res) => {
     if (merchant.countries.length) { merchant.confidence = 'High'; delete merchant.countriesNote; }
     else { merchant.countriesNote = 'No Similarweb data for this site'; }
 
-    await saveMerchants(merchants);
+    await save(merchants);
     return res.status(200).json(merchant);
   } catch (err) {
     console.error(err);

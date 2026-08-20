@@ -20,6 +20,7 @@ const kv = createClient({
 
 const MERCHANTS_KEY = 'merchants_v1';
 const PAYMENTS_KEY = 'payment_methods_v1';
+const LEADS_KEY = 'leads_v1';
 
 function uid(prefix) {
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -88,7 +89,25 @@ async function savePaymentMethods(methods) {
   await kv.set(PAYMENTS_KEY, methods);
 }
 
+// Leads: prospect sites (URL-only) that we run the same Similarweb checks on.
+// Separate collection from merchants; starts empty (no seed).
+async function getLeads() {
+  const data = await kv.get(LEADS_KEY);
+  return data || [];
+}
+async function saveLeads(leads) {
+  await kv.set(LEADS_KEY, leads);
+}
+
+// Pick the read/write pair for a named collection (used by the shared
+// Similarweb endpoints so they can operate on merchants OR leads).
+function collectionIO(name) {
+  if (name === 'leads') return { get: getLeads, save: saveLeads };
+  return { get: getMerchants, save: saveMerchants };
+}
+
 module.exports = {
   getMerchants, saveMerchants, getPaymentMethods, savePaymentMethods, uid,
+  getLeads, saveLeads, collectionIO,
   normDomain, normName, merchantUrls, setMerchantUrls,
 };

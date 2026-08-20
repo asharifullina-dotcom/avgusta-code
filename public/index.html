@@ -160,6 +160,7 @@
     <button data-tab="merchants" class="active">Merchants <span class="count" id="tabCountMerchants"></span></button>
     <button data-tab="payments">Payment Methods <span class="count" id="tabCountPayments"></span></button>
     <button data-tab="match">Match by Payment Method</button>
+    <button data-tab="leads">Leads <span class="count" id="tabCountLeads"></span></button>
   </nav>
 
   <div id="loading" class="loading">Loading data&hellip;</div>
@@ -288,6 +289,53 @@
       <div id="matchEmpty" class="empty-state" style="display:none;">
         <div class="big">&#128176;</div>
         No merchants overlap with this payment method's countries yet.
+      </div>
+    </div>
+  </section>
+
+  <!-- LEADS TAB -->
+  <section id="tab-leads" style="display:none;">
+    <div class="panel">
+      <div class="toolbar">
+        <input type="text" id="leadSearch" placeholder="Search site&hellip;" style="width:220px;">
+        <select id="leadCountryFilter"><option value="">All countries</option></select>
+        <button class="btn secondary small" id="leadClearFiltersBtn" style="display:none;">&times; Clear filter</button>
+        <span style="flex:1"></span>
+        <button class="btn secondary small" id="exportLeadsBtn">&#11015; Export CSV</button>
+        <button class="btn secondary small" id="importLeadsBtn">&#8681; Import CSV/Excel</button>
+        <input type="file" id="importLeadsFile" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none;">
+        <button class="btn secondary small" id="toggleBulkLeads">&#8681; Bulk add (paste)</button>
+      </div>
+      <div class="toolbar" style="border-top:1px dashed var(--border);padding-top:12px;">
+        <input type="text" id="leadAddInput" placeholder="Add site(s) &mdash; comma-separated, e.g. shop.com, store.io" style="width:320px;">
+        <button class="btn small" id="leadAddBtn">+ Add lead(s)</button>
+      </div>
+      <div class="toolbar" style="border-top:1px dashed var(--border);padding-top:12px;">
+        <button class="btn small" id="bulkLeadRefreshBtn">&#127760; Refresh all "Insufficient data" from Similarweb</button>
+        <button class="btn secondary small" id="bulkLeadStopBtn" style="display:none;">Stop</button>
+        <span id="bulkLeadStatus" class="hint"></span>
+      </div>
+      <div class="toolbar" style="padding-top:2px;">
+        <button class="btn small" id="bulkLeadPaymentsBtn">&#128179; Check payment methods for all "Not checked" leads</button>
+        <button class="btn secondary small" id="bulkLeadPaymentsStopBtn" style="display:none;">Stop</button>
+        <span id="bulkLeadPaymentsStatus" class="hint"></span>
+      </div>
+      <div id="leadImportStatus" class="hint" style="margin:-6px 0 8px;"></div>
+      <div id="bulkLeadsWrap" style="display:none;"></div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th style="width:24%">Site</th>
+            <th style="width:30%">Target countries</th>
+            <th style="width:30%">Payment methods (on site)</th>
+            <th style="width:8%"></th>
+          </tr></thead>
+          <tbody id="leadRows"></tbody>
+        </table>
+      </div>
+      <div id="leadEmpty" class="empty-state" style="display:none;">
+        <div class="big">&#127793;</div>
+        No leads yet &mdash; add site URLs above, or import a file / paste a list.
       </div>
     </div>
   </section>
