@@ -465,6 +465,146 @@
     downloadCsv("payment_methods_export.csv", rows);
   }
 
+  // ---------- Import merchants from CSV / Excel ----------
+  // Minimal RFC-4180-ish CSV/TSV parser: handles quoted fields, embedded
+  // commas/newlines, and doubled "" escapes. Auto-detects comma vs tab.
+  function parseDelimited(text) {
+    text = text.replace(/^﻿/, ""); // strip BOM
+    const delim = (text.split("\t").length > text.split(",").length) ? "\t" : ",";
+    const rows = [];
+    let row = [], field = "", inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else inQuotes = false;
+        } else field += ch;
+      } else if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === delim) {
+        row.push(field); field = "";
+      } else if (ch === "\n") {
+        row.push(field); rows.push(row); row = []; field = "";
+      } else if (ch === "\r") {
+        // ignore; \n handles the row break
+      } else field += ch;
+    }
+    row.push(field); rows.push(row);
+    return rows.filter((r) => r.some((c) => String(c).trim() !== ""));
+  }
+
+  // Lazily load the vendored SheetJS build only when an Excel file is picked.
+  let xlsxLoading = null;
+  function loadXlsx() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (xlsxLoading) return xlsxLoading;
+    xlsxLoading = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "/vendor/xlsx.mini.min.js";
+      s.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error("XLSX failed to initialize"));
+      s.onerror = () => reject(new Error("Could not load the Excel parser"));
+      document.head.appendChild(s);
+    });
+    return xlsxLoading;
+  }
+  async function rowsFromFile(file) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+      const XLSX = await loadXlsx();
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      return XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, raw: false });
+    }
+    const text = await file.text();
+    return parseDelimited(text);
+  }
+
+  // Figure out which column is the company and which is the URL. Recognizes
+  // common English + Russian headers; falls back to "first col = company,
+  // second col = url" when there is no header row.
+  function pickColumns(rows) {
+    const first = (rows[0] || []).map((c) => String(c == null ? "" : c).trim().toLowerCase());
+    const findCol = (re) => first.findIndex((h) => re.test(h));
+    let ci = findCol(/company|merchant|name|компан|назван|бренд/);
+    let ui = findCol(/url|site|website|domain|link|сайт|домен|ссылк|адрес/);
+    const hasHeader = ci !== -1 || ui !== -1;
+    if (ci === -1) ci = 0;
+    if (ui === -1) ui = (ci === 0 ? 1 : 0);
+    return { ci, ui, dataRows: hasHeader ? rows.slice(1) : rows };
+  }
+
+  function normDomain(u) {
+    return String(u || "").trim().toLowerCase()
+      .replace(/^https?:\/\//, "").replace(/^www\./, "")
+      .replace(/\/.*$/, "").replace(/\/+$/, "");
+  }
+  function normName(n) {
+    return String(n || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  async function handleImportFile(file) {
+    const status = document.getElementById("importStatus");
+    status.style.color = "";
+    status.textContent = `Reading ${file.name}…`;
+    let rows;
+    try {
+      rows = await rowsFromFile(file);
+    } catch (e) {
+      status.style.color = "var(--bad)";
+      status.textContent = "Couldn't read the file: " + e.message + (/xls/i.test(file.name) ? " — try saving it as CSV and uploading that." : "");
+      return;
+    }
+    if (!rows || !rows.length) { status.style.color = "var(--bad)"; status.textContent = "That file looks empty."; return; }
+
+    const { ci, ui, dataRows } = pickColumns(rows);
+    const parsed = dataRows
+      .map((r) => ({ company: String((r[ci] == null ? "" : r[ci])).trim(), url: String((r[ui] == null ? "" : r[ui])).trim() }))
+      .filter((m) => m.company || m.url);
+
+    const valid = parsed.filter((m) => m.company && m.url);
+    const invalid = parsed.length - valid.length;
+
+    // Preview how many are duplicates of what we already have (domain + name).
+    const existingKeys = new Set(merchants.map((m) => normDomain(m.url) + "|" + normName(m.company)));
+    const batch = new Set();
+    let dupPreview = 0, newPreview = 0;
+    valid.forEach((m) => {
+      const k = normDomain(m.url) + "|" + normName(m.company);
+      if (existingKeys.has(k) || batch.has(k)) dupPreview++;
+      else { batch.add(k); newPreview++; }
+    });
+
+    if (newPreview === 0) {
+      status.style.color = "var(--bad)";
+      status.textContent = `No new merchants found in ${file.name} (${valid.length} rows, all already in the list${invalid ? `; ${invalid} row(s) missing company or URL` : ""}).`;
+      return;
+    }
+    const ok = confirm(
+      `Import from "${file.name}":\n\n` +
+      `• ${newPreview} new merchant(s) will be added\n` +
+      `• ${dupPreview} duplicate(s) will be skipped\n` +
+      (invalid ? `• ${invalid} row(s) skipped (missing company or URL)\n` : "") +
+      `\nProceed?`
+    );
+    if (!ok) { status.textContent = ""; return; }
+
+    status.style.color = "";
+    status.textContent = `Importing ${newPreview} merchant(s)…`;
+    try {
+      const resp = await apiPost("/api/merchants", { action: "importMany", merchants: valid });
+      merchants = resp.merchants || merchants;
+      status.style.color = "var(--good)";
+      status.textContent = `Added ${resp.added}, skipped ${resp.skippedDuplicates} duplicate(s)` +
+        (resp.skippedInvalid ? `, ${resp.skippedInvalid} invalid row(s)` : "") + `.`;
+      renderMerchantsTab();
+    } catch (e) {
+      status.style.color = "var(--bad)";
+      status.textContent = "Import failed: " + e.message;
+    }
+  }
+
   // ---------- Wiring ----------
   function wireStaticEvents() {
     document.querySelectorAll("nav.tabs button").forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
@@ -472,6 +612,12 @@
     document.getElementById("countryFilter").addEventListener("change", renderMerchantsTab);
     document.getElementById("confFilter").addEventListener("change", renderMerchantsTab);
     document.getElementById("exportMerchantsBtn").addEventListener("click", exportMerchantsCsv);
+    document.getElementById("importMerchantsBtn").addEventListener("click", () => document.getElementById("importMerchantsFile").click());
+    document.getElementById("importMerchantsFile").addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = ""; // allow re-picking the same file later
+      if (file) handleImportFile(file);
+    });
     document.getElementById("exportPaymentsBtn").addEventListener("click", exportPaymentsCsv);
     document.getElementById("toggleAddMerchant").addEventListener("click", () => {
       const wrap = document.getElementById("addMerchantFormWrap");

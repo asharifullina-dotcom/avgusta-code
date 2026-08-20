@@ -170,8 +170,11 @@
         </select>
         <span style="flex:1"></span>
         <button class="btn secondary small" id="exportMerchantsBtn">&#11015; Export CSV</button>
+        <button class="btn secondary small" id="importMerchantsBtn">&#8681; Import CSV/Excel</button>
+        <input type="file" id="importMerchantsFile" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none;">
         <button class="btn secondary small" id="toggleAddMerchant">+ Add merchant</button>
       </div>
+      <div id="importStatus" class="hint" style="margin:-6px 0 8px;"></div>
       <div class="toolbar" style="border-top:1px dashed var(--border);padding-top:12px;">
         <button class="btn small" id="bulkRefreshBtn">&#127760; Refresh all "Insufficient data" from Similarweb</button>
         <button class="btn secondary small" id="bulkStopBtn" style="display:none;">Stop</button>
