@@ -2,9 +2,17 @@
 // Vercel KV env vars (KV_REST_API_URL / KV_REST_API_TOKEN) are auto-injected
 // once you connect a KV store to this project in the Vercel dashboard —
 // you never need to type them in yourself.
-const { kv } = require('@vercel/kv');
+const { createClient } = require('@vercel/kv');
 const fs = require('fs');
 const path = require('path');
+
+// Vercel's Marketplace KV/Upstash integration may prefix the injected env vars
+// (e.g. `storage_KV_REST_API_URL`). The default `kv` export only reads the
+// unprefixed names, so we build the client explicitly and accept either form.
+const kv = createClient({
+  url: process.env.KV_REST_API_URL || process.env.storage_KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN || process.env.storage_KV_REST_API_TOKEN,
+});
 
 const MERCHANTS_KEY = 'merchants_v1';
 const PAYMENTS_KEY = 'payment_methods_v1';
