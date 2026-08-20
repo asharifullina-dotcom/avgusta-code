@@ -983,7 +983,7 @@
   }
 
   const cardOf = (r) => r.cardCountry || r.country || ""; // legacy `country` = card country
-  const custOf = (r) => r.customerCountry || "";
+  const ipOf = (r) => r.ipCountry || "";
   function countryOptions(sel, values, allLabel) {
     const cur = sel.value;
     const list = Array.from(new Set(values.filter(Boolean))).sort((a, b) => countryLabel(a).localeCompare(countryLabel(b)));
@@ -992,7 +992,7 @@
   }
   function populateProcFilters() {
     countryOptions(document.getElementById("procCardCountryFilter"), processing.map(cardOf), "All card countries");
-    countryOptions(document.getElementById("procCustomerCountryFilter"), processing.map(custOf), "All customer countries");
+    countryOptions(document.getElementById("procIpCountryFilter"), processing.map(ipOf), "All IP countries");
     const mSel = document.getElementById("procMethodFilter");
     const mCur = mSel.value;
     const methods = Array.from(new Set(processing.map((r) => r.method))).sort();
@@ -1002,7 +1002,7 @@
   function clearProcFilters() {
     document.getElementById("procSearch").value = "";
     document.getElementById("procCardCountryFilter").value = "";
-    document.getElementById("procCustomerCountryFilter").value = "";
+    document.getElementById("procIpCountryFilter").value = "";
     document.getElementById("procMethodFilter").value = "";
     renderProcessingTab();
   }
@@ -1010,12 +1010,12 @@
     const el = document.getElementById("processingStats");
     const sites = new Set(processing.map((r) => r.site));
     const cardCountries = new Set(processing.map(cardOf).filter(Boolean));
-    const custCountries = new Set(processing.map(custOf).filter(Boolean));
+    const ipCountries = new Set(processing.map(ipOf).filter(Boolean));
     const orders = processing.reduce((s, r) => s + (r.count || 0), 0);
     el.innerHTML = `
       <div class="stat"><div class="n">${sites.size}</div><div class="l">Sites</div></div>
       <div class="stat"><div class="n">${cardCountries.size}</div><div class="l">Card countries</div></div>
-      <div class="stat"><div class="n">${custCountries.size}</div><div class="l">Customer countries</div></div>
+      <div class="stat"><div class="n">${ipCountries.size}</div><div class="l">IP countries</div></div>
       <div class="stat"><div class="n">${orders.toLocaleString()}</div><div class="l">Orders</div></div>`;
   }
   function renderProcessingTab() {
@@ -1023,14 +1023,14 @@
     renderProcessingStats();
     const search = document.getElementById("procSearch").value.trim().toLowerCase();
     const cardCf = document.getElementById("procCardCountryFilter").value;
-    const custCf = document.getElementById("procCustomerCountryFilter").value;
+    const ipCf = document.getElementById("procIpCountryFilter").value;
     const mf = document.getElementById("procMethodFilter").value;
     const clearBtn = document.getElementById("procClearFiltersBtn");
-    if (clearBtn) clearBtn.style.display = (search || cardCf || custCf || mf) ? "inline-block" : "none";
+    if (clearBtn) clearBtn.style.display = (search || cardCf || ipCf || mf) ? "inline-block" : "none";
 
     const combos = processing.filter((r) => {
       if (cardCf && cardOf(r) !== cardCf) return false;
-      if (custCf && custOf(r) !== custCf) return false;
+      if (ipCf && ipOf(r) !== ipCf) return false;
       if (mf && r.method !== mf) return false;
       if (search && !String(r.site).toLowerCase().includes(search)) return false;
       return true;
@@ -1040,11 +1040,11 @@
     const bySite = new Map();
     combos.forEach((r) => {
       let g = bySite.get(r.site);
-      if (!g) { g = { site: r.site, card: new Map(), cust: new Map(), methods: new Map(), orders: 0 }; bySite.set(r.site, g); }
+      if (!g) { g = { site: r.site, card: new Map(), ip: new Map(), methods: new Map(), orders: 0 }; bySite.set(r.site, g); }
       const n = r.count || 0;
       g.orders += n;
       g.card.set(cardOf(r), (g.card.get(cardOf(r)) || 0) + n);
-      if (custOf(r)) g.cust.set(custOf(r), (g.cust.get(custOf(r)) || 0) + n);
+      if (ipOf(r)) g.ip.set(ipOf(r), (g.ip.get(ipOf(r)) || 0) + n);
       g.methods.set(r.method, (g.methods.get(r.method) || 0) + n);
     });
     const list = Array.from(bySite.values()).sort((a, b) => b.orders - a.orders);
@@ -1054,7 +1054,7 @@
     else {
       const parts = [];
       if (cardCf) parts.push(`card <b>${escapeHtml(countryLabel(cardCf))}</b>`);
-      if (custCf) parts.push(`customer <b>${escapeHtml(countryLabel(custCf))}</b>`);
+      if (ipCf) parts.push(`IP <b>${escapeHtml(countryLabel(ipCf))}</b>`);
       if (mf) parts.push(`method <b>${escapeHtml(mf)}</b>`);
       intro.innerHTML = parts.length ? `${list.length} site(s) — ${parts.join(", ")}.` : `${list.length} site(s) across the uploaded orders.`;
     }
@@ -1073,7 +1073,7 @@
       return `<tr>
         <td class="url"><a class="site-link" href="https://${escapeHtml(bareHost(g.site))}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${escapeHtml(g.site)}</a></td>
         <td>${chipsFrom(g.card, cardCf)}</td>
-        <td>${chipsFrom(g.cust, custCf)}</td>
+        <td>${chipsFrom(g.ip, ipCf)}</td>
         <td>${methodChips}</td>
         <td class="overlap-badge">${g.orders.toLocaleString()}</td>
       </tr>`;
@@ -1091,9 +1091,9 @@
 
     const header = (rows[0] || []).map((c) => String(c == null ? "" : c).trim().toLowerCase());
     const find = (re) => header.findIndex((h) => re.test(h));
-    const custI = find(/customer\s*country|client\s*country|billing\s*country|страна\s*(клиент|покупател)/);
+    const ipI = find(/ip\s*country|страна\s*ip|ip[-_\s]*страна/);
     let cardI = find(/card\s*country/);
-    if (cardI === -1) cardI = header.findIndex((h, i) => i !== custI && /country|страна/.test(h));
+    if (cardI === -1) cardI = header.findIndex((h, i) => i !== ipI && /country|страна/.test(h));
     const si = find(/wallet name|wallet|site|merchant|domain|url|сайт/);
     const mi = find(/payment method|method|метод/);
     const cui = find(/^cur$|currency|валют/);
@@ -1110,18 +1110,18 @@
       const r = rows[i];
       const site = normDomain(r[si]);
       const cardCountry = String(r[cardI] == null ? "" : r[cardI]).trim().toUpperCase();
-      const customerCountry = custI !== -1 ? String(r[custI] == null ? "" : r[custI]).trim().toUpperCase() : "";
+      const ipCountry = ipI !== -1 ? String(r[ipI] == null ? "" : r[ipI]).trim().toUpperCase() : "";
       const method = String(r[mi] == null ? "" : r[mi]).trim().toLowerCase();
       const cur = cui !== -1 ? String(r[cui] == null ? "" : r[cui]).trim().toUpperCase() : "";
       if (!site || !cardCountry || !method) continue;
-      const key = site + "|" + cardCountry + "|" + customerCountry + "|" + method;
+      const key = site + "|" + cardCountry + "|" + ipCountry + "|" + method;
       let c = combos.get(key);
-      if (!c) { c = { site, cardCountry, customerCountry, method, currencies: new Set(), count: 0 }; combos.set(key, c); }
+      if (!c) { c = { site, cardCountry, ipCountry, method, currencies: new Set(), count: 0 }; combos.set(key, c); }
       c.count++; if (cur) c.currencies.add(cur); used++;
     }
     if (!combos.size) { status.style.color = "var(--bad)"; status.textContent = "No valid rows found (need site + card country + method)."; return; }
 
-    const payload = Array.from(combos.values()).map((c) => ({ site: c.site, cardCountry: c.cardCountry, customerCountry: c.customerCountry, method: c.method, currencies: Array.from(c.currencies), count: c.count }));
+    const payload = Array.from(combos.values()).map((c) => ({ site: c.site, cardCountry: c.cardCountry, ipCountry: c.ipCountry, method: c.method, currencies: Array.from(c.currencies), count: c.count }));
     status.style.color = ""; status.textContent = `Uploading ${used.toLocaleString()} orders (${payload.length} combos)…`;
     try {
       const resp = await apiPost("/api/processing", { action: "import", rows: payload });
@@ -1144,11 +1144,11 @@
   }
 
   function exportProcessingCsv() {
-    const header = ["Site", "Card Country Code", "Card Country", "Customer Country Code", "Customer Country", "Payment Method", "Currencies", "Orders"];
+    const header = ["Site", "Card Country Code", "Card Country", "IP Country Code", "IP Country", "Payment Method", "Currencies", "Orders"];
     const rows = [header];
     processing.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).forEach((r) => {
-      const card = cardOf(r), cust = custOf(r);
-      rows.push([r.site, card, COUNTRY_NAMES[card] || "", cust, COUNTRY_NAMES[cust] || "", r.method, (r.currencies || []).join("; "), r.count || 0]);
+      const card = cardOf(r), ip = ipOf(r);
+      rows.push([r.site, card, COUNTRY_NAMES[card] || "", ip, COUNTRY_NAMES[ip] || "", r.method, (r.currencies || []).join("; "), r.count || 0]);
     });
     downloadCsv("processing_coverage.csv", rows);
   }
@@ -1213,7 +1213,7 @@
     document.getElementById("bulkLeadPaymentsStopBtn").addEventListener("click", () => { bulkLeadPayCancelled = true; });
     document.getElementById("procSearch").addEventListener("input", renderProcessingTab);
     document.getElementById("procCardCountryFilter").addEventListener("change", renderProcessingTab);
-    document.getElementById("procCustomerCountryFilter").addEventListener("change", renderProcessingTab);
+    document.getElementById("procIpCountryFilter").addEventListener("change", renderProcessingTab);
     document.getElementById("procMethodFilter").addEventListener("change", renderProcessingTab);
     document.getElementById("procClearFiltersBtn").addEventListener("click", clearProcFilters);
     document.getElementById("exportProcessingBtn").addEventListener("click", exportProcessingCsv);
