@@ -99,6 +99,10 @@
   tbody tr:hover{background:rgba(255,255,255,0.02);}
   .company{font-weight:600;}
   .url{color:var(--text-dim);font-family:'IBM Plex Mono',monospace;font-size:12px;}
+  .url-item{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
+  .url-item a.site-link{color:inherit;text-decoration:none;overflow-wrap:anywhere;}
+  .url-item a.remove-site{color:var(--bad);text-decoration:none;font-weight:700;flex-shrink:0;}
+  .url-item a.remove-site:hover{color:var(--accent-strong);}
   .chip{
     display:inline-block;background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim);
     font-size:11px;padding:2px 8px;border-radius:20px;margin:2px 4px 2px 0;
@@ -172,9 +176,11 @@
         <button class="btn secondary small" id="exportMerchantsBtn">&#11015; Export CSV</button>
         <button class="btn secondary small" id="importMerchantsBtn">&#8681; Import CSV/Excel</button>
         <input type="file" id="importMerchantsFile" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none;">
+        <button class="btn secondary small" id="toggleBulkAdd">&#8681; Bulk add (paste)</button>
         <button class="btn secondary small" id="toggleAddMerchant">+ Add merchant</button>
       </div>
       <div id="importStatus" class="hint" style="margin:-6px 0 8px;"></div>
+      <div id="bulkAddWrap" style="display:none;"></div>
       <div class="toolbar" style="border-top:1px dashed var(--border);padding-top:12px;">
         <button class="btn small" id="bulkRefreshBtn">&#127760; Refresh all "Insufficient data" from Similarweb</button>
         <button class="btn secondary small" id="bulkStopBtn" style="display:none;">Stop</button>

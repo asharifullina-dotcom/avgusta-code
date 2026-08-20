@@ -1,4 +1,4 @@
-const { getMerchants, saveMerchants } = require('./_lib/store');
+const { getMerchants, saveMerchants, merchantUrls } = require('./_lib/store');
 const { getPaymentTechnologies } = require('./_lib/similarweb');
 
 function domainOf(url) {
@@ -18,10 +18,25 @@ module.exports = async (req, res) => {
     const merchant = merchants.find((m) => m.id === id);
     if (!merchant) return res.status(404).json({ error: 'Merchant not found' });
 
-    const domain = domainOf(merchant.url);
-    const result = await getPaymentTechnologies(domain);
+    const urls = merchantUrls(merchant);
+    if (!urls.length) return res.status(400).json({ error: 'Merchant has no site URL' });
 
-    merchant.paymentMethodsOnSite = result;
+    // Check every site in parallel, then union the detected payment methods
+    // (case-insensitive de-dupe, keeping the first-seen spelling).
+    const settled = await Promise.allSettled(urls.map((u) => getPaymentTechnologies(domainOf(u))));
+    const ok = settled.filter((s) => s.status === 'fulfilled');
+    if (!ok.length) throw (settled[0] && settled[0].reason) || new Error('Similarweb returned no data');
+
+    const seen = new Set();
+    const merged = [];
+    ok.forEach((s) => (s.value || []).forEach((name) => {
+      const key = String(name).toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      merged.push(name);
+    }));
+
+    merchant.paymentMethodsOnSite = merged;
     merchant.paymentMethodsUpdatedAt = new Date().toISOString();
 
     await saveMerchants(merchants);

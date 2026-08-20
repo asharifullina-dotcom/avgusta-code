@@ -25,6 +25,41 @@ function uid(prefix) {
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 }
 
+// ---- Shared normalization (case-insensitive throughout) ----
+// Bare host of a URL: no protocol, no www., no path/trailing slash, lowercased.
+function normDomain(u) {
+  return String(u || '').trim().toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/^www\./, '')
+    .replace(/\/.*$/, '').replace(/\/+$/, '');
+}
+// Company name for identity/dedupe: trimmed, collapsed spaces, lowercased.
+function normName(n) {
+  return String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+// A merchant's list of sites. Back-compat: older records only have `url`.
+function merchantUrls(m) {
+  if (m && Array.isArray(m.urls) && m.urls.length) return m.urls.slice();
+  if (m && m.url) return [m.url];
+  return [];
+}
+// Store a merchant's URLs as a de-duplicated (by host) list and keep the legacy
+// single `url` field pointing at the primary (first) site for back-compat.
+function setMerchantUrls(m, urls) {
+  const seen = new Set();
+  const clean = [];
+  (urls || []).forEach((u) => {
+    const bare = String(u || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    if (!bare) return;
+    const key = normDomain(bare);
+    if (seen.has(key)) return;
+    seen.add(key);
+    clean.push(bare);
+  });
+  m.urls = clean;
+  m.url = clean[0] || '';
+  return m;
+}
+
 async function getMerchants() {
   let data = await kv.get(MERCHANTS_KEY);
   if (!data) {
@@ -53,4 +88,7 @@ async function savePaymentMethods(methods) {
   await kv.set(PAYMENTS_KEY, methods);
 }
 
-module.exports = { getMerchants, saveMerchants, getPaymentMethods, savePaymentMethods, uid };
+module.exports = {
+  getMerchants, saveMerchants, getPaymentMethods, savePaymentMethods, uid,
+  normDomain, normName, merchantUrls, setMerchantUrls,
+};

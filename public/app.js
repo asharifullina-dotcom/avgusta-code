@@ -33,6 +33,13 @@
   function confClass(c) {
     return "conf-" + (c || "").toLowerCase().replace(/[^a-z]+/g, "-").replace(/-+$/, "");
   }
+  // A merchant's list of sites (back-compat: older records only have `url`).
+  function merchantUrls(m) {
+    if (m && Array.isArray(m.urls) && m.urls.length) return m.urls;
+    if (m && m.url) return [m.url];
+    return [];
+  }
+  const bareHost = (u) => String(u || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
   function allCountriesFromMerchants() {
     const set = new Set();
     merchants.forEach((m) => (m.countries || []).forEach((c) => { if (c) set.add(c); }));
@@ -57,13 +64,32 @@
     const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
     const el = document.getElementById("ticker");
     if (top.length === 0) { el.style.display = "none"; return; }
+    el.style.display = "flex";
     el.innerHTML = top.map(([name, count], i) => `
-      <div class="ticker-item">
+      <div class="ticker-item" data-country="${escapeHtml(name)}" role="button" tabindex="0" title="Filter merchants by ${escapeHtml(name)}" style="cursor:pointer;">
         <span class="ticker-rank">${String(i + 1).padStart(2, "0")}</span>
         <span class="ticker-name">${escapeHtml(name)}</span>
         <span class="ticker-count">${count}</span>
       </div>
     `).join("");
+    el.querySelectorAll(".ticker-item").forEach((item) => {
+      const go = () => filterByCountry(item.dataset.country);
+      item.addEventListener("click", go);
+      item.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+    });
+  }
+  // Clicking a ticker country jumps to the Merchants tab filtered by it.
+  function filterByCountry(country) {
+    const sel = document.getElementById("countryFilter");
+    populateCountryFilter();
+    if (![...sel.options].some((o) => o.value === country)) {
+      const opt = document.createElement("option");
+      opt.value = country; opt.textContent = country; sel.appendChild(opt);
+    }
+    sel.value = country;
+    if (activeTab !== "merchants") switchTab("merchants");
+    else renderMerchantsTab();
+    document.getElementById("tab-merchants").scrollIntoView({ behavior: "smooth", block: "start" });
   }
   function renderAllChrome() {
     renderStats();
@@ -100,7 +126,7 @@
     const confFilterVal = document.getElementById("confFilter").value;
 
     let list = merchants.filter((m) => {
-      if (search && !(m.company.toLowerCase().includes(search) || m.url.toLowerCase().includes(search))) return false;
+      if (search && !(m.company.toLowerCase().includes(search) || merchantUrls(m).some((u) => u.toLowerCase().includes(search)))) return false;
       if (countryFilter && !(m.countries || []).includes(countryFilter)) return false;
       if (confFilterVal && m.confidence !== confFilterVal) return false;
       return true;
@@ -120,9 +146,18 @@
         : `<span class="chip empty">Not checked</span>`;
       const paymentsTag = m.paymentMethodsUpdatedAt
         ? `<div class="hint">checked ${new Date(m.paymentMethodsUpdatedAt).toLocaleDateString()}</div>` : "";
+      const urls = merchantUrls(m);
+      const urlsHtml = urls.length
+        ? urls.map((u) => `<div class="url-item">
+            <a class="site-link" href="https://${escapeHtml(bareHost(u))}" target="_blank" rel="noopener">${escapeHtml(u)}</a>
+            <a href="#" class="remove-site" data-url="${escapeHtml(u)}" title="Remove this site">&times;</a>
+          </div>`).join("")
+        : `<span class="chip empty">No site</span>`;
       return `<tr data-id="${m.id}">
         <td class="company">${escapeHtml(m.company)}</td>
-        <td class="url"><a href="https://${escapeHtml(m.url.replace(/^https?:\/\//, ""))}" target="_blank" style="color:inherit;text-decoration:none;">${escapeHtml(m.url)}</a></td>
+        <td class="url">${urlsHtml}
+          <button class="btn secondary small add-site" style="margin-top:4px;">+ site</button>
+        </td>
         <td>${countriesHtml}${sourceTag}
           <button class="btn secondary small refresh-countries" style="margin-top:6px;">&#127760; Similarweb</button>
         </td>
@@ -144,6 +179,33 @@
         renderMerchantsTab();
       });
     });
+    tbody.querySelectorAll(".add-site").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        const id = e.target.closest("tr").dataset.id;
+        const raw = prompt("Add site(s) for this company (comma-separated for several):");
+        if (raw == null) return;
+        const urls = raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+        if (!urls.length) return;
+        try {
+          const resp = await apiPost("/api/merchants", { action: "addSites", id, urls });
+          merchants = resp.merchants || merchants;
+          renderMerchantsTab();
+        } catch (err) { alert("Couldn't add site: " + err.message); }
+      });
+    });
+    tbody.querySelectorAll(".remove-site").forEach((a) => {
+      a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        const id = e.target.closest("tr").dataset.id;
+        const url = e.target.dataset.url;
+        if (!confirm(`Remove site "${url}" from this company?`)) return;
+        try {
+          const resp = await apiPost("/api/merchants", { action: "removeSite", id, url });
+          merchants = resp.merchants || merchants;
+          renderMerchantsTab();
+        } catch (err) { alert("Couldn't remove site: " + err.message); }
+      });
+    });
     tbody.querySelectorAll(".refresh-countries").forEach((btn) => {
       btn.addEventListener("click", (e) => refreshMerchantCountries(e.target.closest("tr").dataset.id, e.target));
     });
@@ -158,7 +220,9 @@
     return `
       <form class="add-form" id="merchantForm">
         <div><label>Company</label><input type="text" name="company" required placeholder="e.g. Acme Trading Ltd"></div>
-        <div><label>URL</label><input type="text" name="url" required placeholder="e.g. example.com"></div>
+        <div><label>URL(s)</label><input type="text" name="url" required placeholder="e.g. example.com, example.net">
+          <div class="hint">One or more sites, comma-separated.</div>
+        </div>
         <div class="full"><label>Target countries (up to 5, comma-separated)</label>
           <input type="text" name="countries" placeholder="e.g. Brazil, Mexico, Colombia">
           <div class="hint">Only list what you can actually verify &mdash; leave blank if unknown.</div>
@@ -184,17 +248,55 @@
       e.preventDefault();
       const fd = new FormData(e.target);
       const countries = (fd.get("countries") || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 5);
+      const urls = (fd.get("url") || "").split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
       const merchant = {
         company: (fd.get("company") || "").trim(),
-        url: (fd.get("url") || "").trim(),
+        url: urls,
         countries,
         confidence: fd.get("confidence"),
         notes: (fd.get("notes") || "").trim(),
       };
-      if (!merchant.company || !merchant.url) return;
+      if (!merchant.company || !urls.length) return;
       merchants = await apiPost("/api/merchants", { action: "add", merchant });
       wrap.style.display = "none"; wrap.innerHTML = "";
       renderMerchantsTab();
+    });
+  }
+
+  function wireBulkAddForm() {
+    const wrap = document.getElementById("bulkAddWrap");
+    wrap.innerHTML = `
+      <form class="add-form" id="bulkForm" style="grid-template-columns:1fr;">
+        <div class="full"><label>Paste rows &mdash; one merchant per line: <b>Company, URL</b> (comma or tab separated)</label>
+          <textarea name="rows" style="min-height:120px;" placeholder="Acme Payments Ltd, acme.com&#10;Globex Trading, globex.com&#10;Globex Trading, globex.io"></textarea>
+          <div class="hint">A company can appear on several lines with different URLs &mdash; the sites get merged under one company. Case is ignored; existing merchants and exact duplicates are skipped.</div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn secondary small" id="cancelBulkAdd">Cancel</button>
+          <button type="submit" class="btn small">Add these</button>
+        </div>
+      </form>`;
+    wrap.style.display = "block";
+    document.getElementById("cancelBulkAdd").addEventListener("click", () => { wrap.style.display = "none"; wrap.innerHTML = ""; });
+    document.getElementById("bulkForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = new FormData(e.target).get("rows") || "";
+      const rows = text.split(/\r?\n/).map((line) => {
+        const parts = line.split(/[,\t]/);
+        return { company: (parts[0] || "").trim(), url: (parts[1] || "").trim() };
+      }).filter((r) => r.company || r.url);
+      const valid = rows.filter((r) => r.company && r.url);
+      const status = document.getElementById("importStatus");
+      if (!valid.length) { status.style.color = "var(--bad)"; status.textContent = "No valid \"Company, URL\" lines found."; return; }
+      status.style.color = ""; status.textContent = `Adding ${valid.length} row(s)…`;
+      try {
+        const resp = await apiPost("/api/merchants", { action: "importMany", merchants: valid });
+        merchants = resp.merchants || merchants;
+        status.style.color = "var(--good)";
+        status.textContent = `Added ${resp.added} new compan${resp.added === 1 ? "y" : "ies"}, attached ${resp.attachedSites} extra site(s), skipped ${resp.skippedDuplicates} duplicate(s)` + (resp.skippedInvalid ? `, ${resp.skippedInvalid} invalid` : "") + ".";
+        wrap.style.display = "none"; wrap.innerHTML = "";
+        renderMerchantsTab();
+      } catch (err) { status.style.color = "var(--bad)"; status.textContent = "Bulk add failed: " + err.message; }
     });
   }
 
@@ -313,24 +415,25 @@
     }
 
     const hasName = !!criteria.name;
-    const pmCountries = new Set(criteria.countries);
+    const pmCountries = new Set(criteria.countries.map((c) => c.toLowerCase())); // case-insensitive
     let scored = merchants.map((m) => {
-      const overlap = (m.countries || []).filter((c) => pmCountries.has(c));
+      const overlap = (m.countries || []).filter((c) => pmCountries.has(String(c).toLowerCase()));
       const already = hasName && (m.paymentMethodsOnSite || []).some((p) => p.toLowerCase() === criteria.name.toLowerCase());
       return { m, overlap, already };
     });
     scored.sort((a, b) => b.overlap.length - a.overlap.length);
     if (!showAll) scored = scored.filter((s) => s.overlap.length > 0);
 
+    const critList = criteria.countries.map(escapeHtml).join(", ");
     intro.innerHTML = hasName
-      ? `<b>${escapeHtml(criteria.name)}</b> is used in <b>${Array.from(pmCountries).map(escapeHtml).join(", ")}</b>. Showing merchants targeting at least one of those markets, ranked by overlap.`
-      : `Showing merchants targeting at least one of <b>${Array.from(pmCountries).map(escapeHtml).join(", ")}</b>, ranked by how many of those countries they target.`;
+      ? `<b>${escapeHtml(criteria.name)}</b> is used in <b>${critList}</b>. Showing merchants targeting at least one of those markets, ranked by overlap.`
+      : `Showing merchants targeting at least one of <b>${critList}</b>, ranked by how many of those countries they target.`;
 
     document.getElementById("matchEmpty").style.display = scored.length ? "none" : "block";
 
     tbody.innerHTML = scored.map(({ m, overlap, already }) => {
       const chips = (m.countries && m.countries.length)
-        ? m.countries.map((c) => (pmCountries.has(c) ? `<span class="chip hit">${escapeHtml(c)}</span>` : `<span class="chip">${escapeHtml(c)}</span>`)).join("")
+        ? m.countries.map((c) => (pmCountries.has(String(c).toLowerCase()) ? `<span class="chip hit">${escapeHtml(c)}</span>` : `<span class="chip">${escapeHtml(c)}</span>`)).join("")
         : `<span class="chip empty">Insufficient data</span>`;
       const statusChip = hasName
         ? (already ? `<span class="chip" style="color:var(--text-faint);border-style:dashed;">already offered</span>` : `<span class="chip hit">opportunity</span>`)
@@ -338,7 +441,7 @@
       return `<tr>
         <td class="overlap-badge">${overlap.length}</td>
         <td class="company">${escapeHtml(m.company)}</td>
-        <td class="url">${escapeHtml(m.url)}</td>
+        <td class="url">${escapeHtml(merchantUrls(m).join(", "))}</td>
         <td>${chips}</td>
         <td>${statusChip}</td>
         <td class="notes-cell">${escapeHtml(m.notes || "")}</td>
@@ -454,7 +557,7 @@
     const rows = [header];
     merchants.forEach((m) => {
       const c = m.countries || [];
-      rows.push([m.company, m.url, c[0] || "", c[1] || "", c[2] || "", c[3] || "", c[4] || "", m.confidence || "", m.notes || "", m.countriesSource || "manual", m.countriesUpdatedAt || "", (m.paymentMethodsOnSite || []).join("; "), m.paymentMethodsUpdatedAt || ""]);
+      rows.push([m.company, merchantUrls(m).join(" | "), c[0] || "", c[1] || "", c[2] || "", c[3] || "", c[4] || "", m.confidence || "", m.notes || "", m.countriesSource || "manual", m.countriesUpdatedAt || "", (m.paymentMethodsOnSite || []).join("; "), m.paymentMethodsUpdatedAt || ""]);
     });
     downloadCsv("merchants_export.csv", rows);
   }
@@ -566,24 +669,30 @@
     const valid = parsed.filter((m) => m.company && m.url);
     const invalid = parsed.length - valid.length;
 
-    // Preview how many are duplicates of what we already have (domain + name).
-    const existingKeys = new Set(merchants.map((m) => normDomain(m.url) + "|" + normName(m.company)));
-    const batch = new Set();
-    let dupPreview = 0, newPreview = 0;
-    valid.forEach((m) => {
-      const k = normDomain(m.url) + "|" + normName(m.company);
-      if (existingKeys.has(k) || batch.has(k)) dupPreview++;
-      else { batch.add(k); newPreview++; }
+    // Preview, mirroring the server: companies are matched by name (case-
+    // insensitive); a new site attaches to an existing company, an exact
+    // (name + domain) repeat is skipped.
+    const byName = new Map();
+    merchants.forEach((m) => byName.set(normName(m.company), new Set(merchantUrls(m).map(normDomain))));
+    let newPreview = 0, attachPreview = 0, dupPreview = 0;
+    valid.forEach(({ company, url }) => {
+      const nn = normName(company), nd = normDomain(url);
+      if (byName.has(nn)) {
+        const s = byName.get(nn);
+        if (s.has(nd)) dupPreview++;
+        else { s.add(nd); attachPreview++; }
+      } else { byName.set(nn, new Set([nd])); newPreview++; }
     });
 
-    if (newPreview === 0) {
+    if (newPreview === 0 && attachPreview === 0) {
       status.style.color = "var(--bad)";
-      status.textContent = `No new merchants found in ${file.name} (${valid.length} rows, all already in the list${invalid ? `; ${invalid} row(s) missing company or URL` : ""}).`;
+      status.textContent = `Nothing new in ${file.name} (${valid.length} rows, all already in the list${invalid ? `; ${invalid} row(s) missing company or URL` : ""}).`;
       return;
     }
     const ok = confirm(
       `Import from "${file.name}":\n\n` +
-      `• ${newPreview} new merchant(s) will be added\n` +
+      `• ${newPreview} new compan${newPreview === 1 ? "y" : "ies"} will be added\n` +
+      `• ${attachPreview} extra site(s) will be attached to existing companies\n` +
       `• ${dupPreview} duplicate(s) will be skipped\n` +
       (invalid ? `• ${invalid} row(s) skipped (missing company or URL)\n` : "") +
       `\nProceed?`
@@ -591,12 +700,12 @@
     if (!ok) { status.textContent = ""; return; }
 
     status.style.color = "";
-    status.textContent = `Importing ${newPreview} merchant(s)…`;
+    status.textContent = `Importing…`;
     try {
       const resp = await apiPost("/api/merchants", { action: "importMany", merchants: valid });
       merchants = resp.merchants || merchants;
       status.style.color = "var(--good)";
-      status.textContent = `Added ${resp.added}, skipped ${resp.skippedDuplicates} duplicate(s)` +
+      status.textContent = `Added ${resp.added} new compan${resp.added === 1 ? "y" : "ies"}, attached ${resp.attachedSites} extra site(s), skipped ${resp.skippedDuplicates} duplicate(s)` +
         (resp.skippedInvalid ? `, ${resp.skippedInvalid} invalid row(s)` : "") + `.`;
       renderMerchantsTab();
     } catch (e) {
@@ -622,6 +731,10 @@
     document.getElementById("toggleAddMerchant").addEventListener("click", () => {
       const wrap = document.getElementById("addMerchantFormWrap");
       if (wrap.style.display === "block") { wrap.style.display = "none"; wrap.innerHTML = ""; } else wireAddMerchantForm();
+    });
+    document.getElementById("toggleBulkAdd").addEventListener("click", () => {
+      const wrap = document.getElementById("bulkAddWrap");
+      if (wrap.style.display === "block") { wrap.style.display = "none"; wrap.innerHTML = ""; } else wireBulkAddForm();
     });
     document.getElementById("toggleAddPayment").addEventListener("click", () => {
       const wrap = document.getElementById("addPaymentFormWrap");
