@@ -1,0 +1,517 @@
+(function () {
+  let merchants = [];
+  let paymentMethods = [];
+  let activeTab = "merchants";
+
+  async function apiGet(path) {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error(`HTTP ${res.status} on GET ${path}`);
+    return res.json();
+  }
+  async function apiPost(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    let data;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status} on POST ${path}`);
+    return data;
+  }
+
+  async function loadAll() {
+    [merchants, paymentMethods] = await Promise.all([
+      apiGet("/api/merchants"),
+      apiGet("/api/payment-methods"),
+    ]);
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function confClass(c) {
+    return "conf-" + (c || "").toLowerCase().replace(/[^a-z]+/g, "-").replace(/-+$/, "");
+  }
+  function allCountriesFromMerchants() {
+    const set = new Set();
+    merchants.forEach((m) => (m.countries || []).forEach((c) => { if (c) set.add(c); }));
+    return Array.from(set).sort();
+  }
+
+  // ---------- Header stats + ticker ----------
+  function renderStats() {
+    const el = document.getElementById("statRow");
+    const countries = allCountriesFromMerchants();
+    const withData = merchants.filter((m) => (m.countries || []).length > 0).length;
+    el.innerHTML = `
+      <div class="stat"><div class="n">${merchants.length}</div><div class="l">Merchants</div></div>
+      <div class="stat"><div class="n">${withData}</div><div class="l">With countries</div></div>
+      <div class="stat"><div class="n">${countries.length}</div><div class="l">Markets covered</div></div>
+      <div class="stat"><div class="n">${paymentMethods.length}</div><div class="l">Payment methods</div></div>
+    `;
+  }
+  function renderTicker() {
+    const counts = {};
+    merchants.forEach((m) => (m.countries || []).forEach((c) => { counts[c] = (counts[c] || 0) + 1; }));
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const el = document.getElementById("ticker");
+    if (top.length === 0) { el.style.display = "none"; return; }
+    el.innerHTML = top.map(([name, count], i) => `
+      <div class="ticker-item">
+        <span class="ticker-rank">${String(i + 1).padStart(2, "0")}</span>
+        <span class="ticker-name">${escapeHtml(name)}</span>
+        <span class="ticker-count">${count}</span>
+      </div>
+    `).join("");
+  }
+  function renderAllChrome() {
+    renderStats();
+    renderTicker();
+    document.getElementById("tabCountMerchants").textContent = merchants.length;
+    document.getElementById("tabCountPayments").textContent = paymentMethods.length;
+  }
+
+  // ---------- Tabs ----------
+  function switchTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    ["merchants", "payments", "match"].forEach((t) => {
+      document.getElementById("tab-" + t).style.display = t === tab ? "block" : "none";
+    });
+    if (tab === "merchants") renderMerchantsTab();
+    if (tab === "payments") renderPaymentsTab();
+    if (tab === "match") renderMatchTab();
+  }
+
+  // ---------- Merchants tab ----------
+  function populateCountryFilter() {
+    const sel = document.getElementById("countryFilter");
+    const current = sel.value;
+    const countries = allCountriesFromMerchants();
+    sel.innerHTML = '<option value="">All countries</option>' + countries.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+    sel.value = current;
+  }
+
+  function renderMerchantsTab() {
+    populateCountryFilter();
+    const search = document.getElementById("merchantSearch").value.trim().toLowerCase();
+    const countryFilter = document.getElementById("countryFilter").value;
+    const confFilterVal = document.getElementById("confFilter").value;
+
+    let list = merchants.filter((m) => {
+      if (search && !(m.company.toLowerCase().includes(search) || m.url.toLowerCase().includes(search))) return false;
+      if (countryFilter && !(m.countries || []).includes(countryFilter)) return false;
+      if (confFilterVal && m.confidence !== confFilterVal) return false;
+      return true;
+    });
+
+    const tbody = document.getElementById("merchantRows");
+    document.getElementById("merchantEmpty").style.display = list.length ? "none" : "block";
+
+    tbody.innerHTML = list.map((m) => {
+      const countriesHtml = (m.countries && m.countries.length)
+        ? m.countries.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")
+        : `<span class="chip empty">Insufficient data</span>`;
+      const sourceTag = m.countriesSource === "similarweb"
+        ? `<div class="hint">via Similarweb${m.countriesUpdatedAt ? ", " + new Date(m.countriesUpdatedAt).toLocaleDateString() : ""}</div>` : "";
+      const paymentsHtml = (m.paymentMethodsOnSite && m.paymentMethodsOnSite.length)
+        ? m.paymentMethodsOnSite.map((p) => `<span class="chip">${escapeHtml(p)}</span>`).join("")
+        : `<span class="chip empty">Not checked</span>`;
+      const paymentsTag = m.paymentMethodsUpdatedAt
+        ? `<div class="hint">checked ${new Date(m.paymentMethodsUpdatedAt).toLocaleDateString()}</div>` : "";
+      return `<tr data-id="${m.id}">
+        <td class="company">${escapeHtml(m.company)}</td>
+        <td class="url"><a href="https://${escapeHtml(m.url.replace(/^https?:\/\//, ""))}" target="_blank" style="color:inherit;text-decoration:none;">${escapeHtml(m.url)}</a></td>
+        <td>${countriesHtml}${sourceTag}
+          <button class="btn secondary small refresh-countries" style="margin-top:6px;">&#127760; Similarweb</button>
+        </td>
+        <td>${paymentsHtml}${paymentsTag}
+          <button class="btn secondary small refresh-payments" style="margin-top:6px;">&#128179; Check</button>
+        </td>
+        <td><span class="conf ${confClass(m.confidence)}">${escapeHtml(m.confidence || "-")}</span></td>
+        <td class="notes-cell">${escapeHtml(m.notes || "")}</td>
+        <td><button class="btn danger delete-merchant">Delete</button></td>
+      </tr>`;
+    }).join("");
+
+    tbody.querySelectorAll(".delete-merchant").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        const id = e.target.closest("tr").dataset.id;
+        if (!confirm("Remove this merchant from the tracker?")) return;
+        merchants = await apiPost("/api/merchants", { action: "delete", id });
+        renderAllChrome();
+        renderMerchantsTab();
+      });
+    });
+    tbody.querySelectorAll(".refresh-countries").forEach((btn) => {
+      btn.addEventListener("click", (e) => refreshMerchantCountries(e.target.closest("tr").dataset.id, e.target));
+    });
+    tbody.querySelectorAll(".refresh-payments").forEach((btn) => {
+      btn.addEventListener("click", (e) => refreshMerchantPayments(e.target.closest("tr").dataset.id, e.target));
+    });
+
+    renderAllChrome();
+  }
+
+  function addMerchantFormHtml() {
+    return `
+      <form class="add-form" id="merchantForm">
+        <div><label>Company</label><input type="text" name="company" required placeholder="e.g. Acme Trading Ltd"></div>
+        <div><label>URL</label><input type="text" name="url" required placeholder="e.g. example.com"></div>
+        <div class="full"><label>Target countries (up to 5, comma-separated)</label>
+          <input type="text" name="countries" placeholder="e.g. Brazil, Mexico, Colombia">
+          <div class="hint">Only list what you can actually verify &mdash; leave blank if unknown.</div>
+        </div>
+        <div><label>Confidence</label>
+          <select name="confidence">
+            <option>High</option><option>Medium-High</option><option selected>Medium</option><option>Low-Medium</option><option>Low</option>
+          </select>
+        </div>
+        <div><label>Notes</label><input type="text" name="notes" placeholder="Basis for this assessment"></div>
+        <div class="form-actions">
+          <button type="button" class="btn secondary small" id="cancelAddMerchant">Cancel</button>
+          <button type="submit" class="btn small">Save merchant</button>
+        </div>
+      </form>`;
+  }
+  function wireAddMerchantForm() {
+    const wrap = document.getElementById("addMerchantFormWrap");
+    wrap.innerHTML = addMerchantFormHtml();
+    wrap.style.display = "block";
+    document.getElementById("cancelAddMerchant").addEventListener("click", () => { wrap.style.display = "none"; wrap.innerHTML = ""; });
+    document.getElementById("merchantForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const countries = (fd.get("countries") || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 5);
+      const merchant = {
+        company: (fd.get("company") || "").trim(),
+        url: (fd.get("url") || "").trim(),
+        countries,
+        confidence: fd.get("confidence"),
+        notes: (fd.get("notes") || "").trim(),
+      };
+      if (!merchant.company || !merchant.url) return;
+      merchants = await apiPost("/api/merchants", { action: "add", merchant });
+      wrap.style.display = "none"; wrap.innerHTML = "";
+      renderMerchantsTab();
+    });
+  }
+
+  // ---------- Payment methods tab ----------
+  function renderPaymentsTab() {
+    const tbody = document.getElementById("paymentRows");
+    tbody.innerHTML = paymentMethods.map((p) => {
+      const typeClass = "badge-type-" + (p.type || "global").toLowerCase();
+      return `<tr data-id="${p.id}">
+        <td class="company">${escapeHtml(p.name)}</td>
+        <td><span class="type-badge ${typeClass}">${escapeHtml(p.type || "Global")}</span></td>
+        <td>${(p.countries || []).map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")}</td>
+        <td class="notes-cell">${escapeHtml(p.notes || "")}</td>
+        <td><button class="btn danger delete-payment">Delete</button></td>
+      </tr>`;
+    }).join("");
+    tbody.querySelectorAll(".delete-payment").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        const id = e.target.closest("tr").dataset.id;
+        if (!confirm("Remove this payment method?")) return;
+        paymentMethods = await apiPost("/api/payment-methods", { action: "delete", id });
+        renderPaymentsTab();
+        renderAllChrome();
+      });
+    });
+    renderAllChrome();
+  }
+
+  function addPaymentFormHtml() {
+    return `
+      <form class="add-form" id="paymentForm">
+        <div><label>Method name</label><input type="text" name="name" required placeholder="e.g. Pix"></div>
+        <div><label>Type</label><select name="type"><option>Local</option><option>Regional</option><option>Global</option></select></div>
+        <div class="full"><label>Countries / markets (comma-separated)</label><input type="text" name="countries" required placeholder="e.g. Brazil"></div>
+        <div class="full"><label>Notes</label><textarea name="notes" placeholder="Why merchants would want this"></textarea></div>
+        <div class="form-actions">
+          <button type="button" class="btn secondary small" id="cancelAddPayment">Cancel</button>
+          <button type="submit" class="btn small">Save payment method</button>
+        </div>
+      </form>`;
+  }
+  function wireAddPaymentForm() {
+    const wrap = document.getElementById("addPaymentFormWrap");
+    wrap.innerHTML = addPaymentFormHtml();
+    wrap.style.display = "block";
+    document.getElementById("cancelAddPayment").addEventListener("click", () => { wrap.style.display = "none"; wrap.innerHTML = ""; });
+    document.getElementById("paymentForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const countries = (fd.get("countries") || "").split(",").map((s) => s.trim()).filter(Boolean);
+      const method = { name: (fd.get("name") || "").trim(), type: fd.get("type"), countries, notes: (fd.get("notes") || "").trim() };
+      if (!method.name || countries.length === 0) return;
+      paymentMethods = await apiPost("/api/payment-methods", { action: "add", method });
+      wrap.style.display = "none"; wrap.innerHTML = "";
+      renderPaymentsTab();
+      populateMatchSelect();
+    });
+  }
+
+  // ---------- Match tab ----------
+  let matchMode = "saved";
+  let customCountries = [];
+
+  function populateMatchSelect() {
+    const sel = document.getElementById("matchSelect");
+    const current = sel.value;
+    sel.innerHTML = paymentMethods.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${(p.countries || []).join(", ")})</option>`).join("");
+    if (current) sel.value = current;
+  }
+  function renderCustomChips() {
+    const wrap = document.getElementById("customPmChips");
+    wrap.innerHTML = customCountries.map((c, i) =>
+      `<span class="chip">${escapeHtml(c)} <a href="#" data-i="${i}" class="remove-chip" style="color:var(--bad);text-decoration:none;margin-left:4px;">&times;</a></span>`
+    ).join("") || `<span class="hint">No countries added yet.</span>`;
+    wrap.querySelectorAll(".remove-chip").forEach((a) => {
+      a.addEventListener("click", (e) => { e.preventDefault(); customCountries.splice(Number(e.target.dataset.i), 1); renderCustomChips(); });
+    });
+  }
+  function commitPendingCountryInput() {
+    const input = document.getElementById("customPmCountryInput");
+    const val = input.value.trim().replace(/,$/, "");
+    if (val && !customCountries.some((c) => c.toLowerCase() === val.toLowerCase())) customCountries.push(val);
+    input.value = "";
+  }
+  function setMatchMode(mode) {
+    matchMode = mode;
+    document.getElementById("modeSavedBtn").className = mode === "saved" ? "btn small" : "btn secondary small";
+    document.getElementById("modeCustomBtn").className = mode === "custom" ? "btn small" : "btn secondary small";
+    document.getElementById("savedModePanel").style.display = mode === "saved" ? "block" : "none";
+    document.getElementById("customModePanel").style.display = mode === "custom" ? "block" : "none";
+    renderMatchTab();
+  }
+  function currentMatchCriteria() {
+    if (matchMode === "saved") {
+      const sel = document.getElementById("matchSelect");
+      const pm = paymentMethods.find((p) => p.id === sel.value) || paymentMethods[0];
+      return pm ? { name: pm.name, countries: pm.countries || [] } : null;
+    }
+    const name = document.getElementById("customPmName").value.trim();
+    if (customCountries.length === 0) return null;
+    return { name, countries: customCountries.slice() };
+  }
+  function renderMatchTab() {
+    populateMatchSelect();
+    renderCustomChips();
+    const showAll = document.getElementById("matchShowAll").checked;
+    const intro = document.getElementById("matchIntro");
+    const tbody = document.getElementById("matchRows");
+
+    const criteria = currentMatchCriteria();
+    if (!criteria) {
+      intro.textContent = matchMode === "saved" ? "Add a payment method first." : "Add at least one country, then click \"Find merchants\" (the method name is optional).";
+      tbody.innerHTML = "";
+      document.getElementById("matchEmpty").style.display = "block";
+      return;
+    }
+
+    const hasName = !!criteria.name;
+    const pmCountries = new Set(criteria.countries);
+    let scored = merchants.map((m) => {
+      const overlap = (m.countries || []).filter((c) => pmCountries.has(c));
+      const already = hasName && (m.paymentMethodsOnSite || []).some((p) => p.toLowerCase() === criteria.name.toLowerCase());
+      return { m, overlap, already };
+    });
+    scored.sort((a, b) => b.overlap.length - a.overlap.length);
+    if (!showAll) scored = scored.filter((s) => s.overlap.length > 0);
+
+    intro.innerHTML = hasName
+      ? `<b>${escapeHtml(criteria.name)}</b> is used in <b>${Array.from(pmCountries).map(escapeHtml).join(", ")}</b>. Showing merchants targeting at least one of those markets, ranked by overlap.`
+      : `Showing merchants targeting at least one of <b>${Array.from(pmCountries).map(escapeHtml).join(", ")}</b>, ranked by how many of those countries they target.`;
+
+    document.getElementById("matchEmpty").style.display = scored.length ? "none" : "block";
+
+    tbody.innerHTML = scored.map(({ m, overlap, already }) => {
+      const chips = (m.countries && m.countries.length)
+        ? m.countries.map((c) => (pmCountries.has(c) ? `<span class="chip hit">${escapeHtml(c)}</span>` : `<span class="chip">${escapeHtml(c)}</span>`)).join("")
+        : `<span class="chip empty">Insufficient data</span>`;
+      const statusChip = hasName
+        ? (already ? `<span class="chip" style="color:var(--text-faint);border-style:dashed;">already offered</span>` : `<span class="chip hit">opportunity</span>`)
+        : `<span class="hint">&mdash;</span>`;
+      return `<tr>
+        <td class="overlap-badge">${overlap.length}</td>
+        <td class="company">${escapeHtml(m.company)}</td>
+        <td class="url">${escapeHtml(m.url)}</td>
+        <td>${chips}</td>
+        <td>${statusChip}</td>
+        <td class="notes-cell">${escapeHtml(m.notes || "")}</td>
+      </tr>`;
+    }).join("");
+  }
+  async function saveCustomAsPaymentMethod() {
+    commitPendingCountryInput();
+    renderCustomChips();
+    const name = document.getElementById("customPmName").value.trim();
+    if (!name || customCountries.length === 0) { alert("Enter a payment method name and at least one country first."); return; }
+    const method = { name, type: "Local", countries: customCountries.slice(), notes: "Added via quick match." };
+    paymentMethods = await apiPost("/api/payment-methods", { action: "add", method });
+    const added = paymentMethods.find((p) => p.name === name) || paymentMethods[paymentMethods.length - 1];
+    populateMatchSelect();
+    document.getElementById("matchSelect").value = added.id;
+    setMatchMode("saved");
+  }
+
+  // ---------- Live refresh (calls our own /api which holds the secret key) ----------
+  async function refreshMerchantCountries(id, btn) {
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = "…";
+    try {
+      const updated = await apiPost("/api/refresh-countries", { id });
+      merchants = merchants.map((m) => (m.id === id ? updated : m));
+      renderMerchantsTab();
+      if (activeTab === "match") renderMatchTab();
+    } catch (e) {
+      alert("Couldn't refresh from Similarweb: " + e.message);
+      btn.disabled = false; btn.textContent = original;
+    }
+  }
+  async function refreshMerchantPayments(id, btn) {
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = "…";
+    try {
+      const updated = await apiPost("/api/check-payments", { id });
+      merchants = merchants.map((m) => (m.id === id ? updated : m));
+      renderMerchantsTab();
+      if (activeTab === "match") renderMatchTab();
+    } catch (e) {
+      alert("Couldn't check payment methods: " + e.message);
+      btn.disabled = false; btn.textContent = original;
+    }
+  }
+
+  let bulkRefreshCancelled = false;
+  async function bulkRefreshCountries() {
+    bulkRefreshCancelled = false;
+    const targets = merchants.filter((m) => !(m.countries || []).length);
+    const status = document.getElementById("bulkStatus");
+    const bulkBtn = document.getElementById("bulkRefreshBtn");
+    const stopBtn = document.getElementById("bulkStopBtn");
+    if (targets.length === 0) { status.textContent = "Nothing to refresh — every merchant already has countries."; return; }
+    bulkBtn.disabled = true; stopBtn.style.display = "inline-block";
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkRefreshCancelled) break;
+      const m = targets[i];
+      status.textContent = `Refreshing ${i + 1}/${targets.length}: ${m.url}…`;
+      try {
+        const updated = await apiPost("/api/refresh-countries", { id: m.id });
+        merchants = merchants.map((x) => (x.id === m.id ? updated : x));
+        renderMerchantsTab();
+      } catch (e) { console.error("bulk refresh failed for", m.url, e); }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    status.textContent = bulkRefreshCancelled ? `Stopped after checking some of ${targets.length} merchants.` : `Done — checked ${targets.length} merchants with Similarweb.`;
+    bulkBtn.disabled = false; stopBtn.style.display = "none";
+  }
+
+  let bulkPaymentsCancelled = false;
+  async function bulkRefreshPayments() {
+    bulkPaymentsCancelled = false;
+    const targets = merchants.filter((m) => !m.paymentMethodsOnSite || m.paymentMethodsOnSite.length === 0);
+    const status = document.getElementById("bulkPaymentsStatus");
+    const bulkBtn = document.getElementById("bulkPaymentsBtn");
+    const stopBtn = document.getElementById("bulkPaymentsStopBtn");
+    if (targets.length === 0) { status.textContent = "Nothing to check — every merchant already has a result."; return; }
+    bulkBtn.disabled = true; stopBtn.style.display = "inline-block";
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkPaymentsCancelled) break;
+      const m = targets[i];
+      status.textContent = `Checking ${i + 1}/${targets.length}: ${m.url}…`;
+      try {
+        const updated = await apiPost("/api/check-payments", { id: m.id });
+        merchants = merchants.map((x) => (x.id === m.id ? updated : x));
+        renderMerchantsTab();
+      } catch (e) { console.error("bulk payment check failed for", m.url, e); }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    status.textContent = bulkPaymentsCancelled ? `Stopped after checking some of ${targets.length} merchants.` : `Done — checked ${targets.length} merchants for payment technologies.`;
+    bulkBtn.disabled = false; stopBtn.style.display = "none";
+  }
+
+  // ---------- CSV export ----------
+  function csvEscape(v) {
+    const s = String(v == null ? "" : v);
+    if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  function downloadCsv(filename, rows) {
+    const csv = rows.map((r) => r.map(csvEscape).join(",")).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function exportMerchantsCsv() {
+    const header = ["Company", "URL", "Country 1", "Country 2", "Country 3", "Country 4", "Country 5", "Confidence", "Notes", "Countries Source", "Countries Updated At", "Payment Methods On Site", "Payment Methods Updated At"];
+    const rows = [header];
+    merchants.forEach((m) => {
+      const c = m.countries || [];
+      rows.push([m.company, m.url, c[0] || "", c[1] || "", c[2] || "", c[3] || "", c[4] || "", m.confidence || "", m.notes || "", m.countriesSource || "manual", m.countriesUpdatedAt || "", (m.paymentMethodsOnSite || []).join("; "), m.paymentMethodsUpdatedAt || ""]);
+    });
+    downloadCsv("merchants_export.csv", rows);
+  }
+  function exportPaymentsCsv() {
+    const header = ["Name", "Type", "Countries", "Notes"];
+    const rows = [header];
+    paymentMethods.forEach((p) => rows.push([p.name, p.type || "", (p.countries || []).join("; "), p.notes || ""]));
+    downloadCsv("payment_methods_export.csv", rows);
+  }
+
+  // ---------- Wiring ----------
+  function wireStaticEvents() {
+    document.querySelectorAll("nav.tabs button").forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+    document.getElementById("merchantSearch").addEventListener("input", renderMerchantsTab);
+    document.getElementById("countryFilter").addEventListener("change", renderMerchantsTab);
+    document.getElementById("confFilter").addEventListener("change", renderMerchantsTab);
+    document.getElementById("exportMerchantsBtn").addEventListener("click", exportMerchantsCsv);
+    document.getElementById("exportPaymentsBtn").addEventListener("click", exportPaymentsCsv);
+    document.getElementById("toggleAddMerchant").addEventListener("click", () => {
+      const wrap = document.getElementById("addMerchantFormWrap");
+      if (wrap.style.display === "block") { wrap.style.display = "none"; wrap.innerHTML = ""; } else wireAddMerchantForm();
+    });
+    document.getElementById("toggleAddPayment").addEventListener("click", () => {
+      const wrap = document.getElementById("addPaymentFormWrap");
+      if (wrap.style.display === "block") { wrap.style.display = "none"; wrap.innerHTML = ""; } else wireAddPaymentForm();
+    });
+    document.getElementById("bulkRefreshBtn").addEventListener("click", bulkRefreshCountries);
+    document.getElementById("bulkStopBtn").addEventListener("click", () => { bulkRefreshCancelled = true; });
+    document.getElementById("bulkPaymentsBtn").addEventListener("click", bulkRefreshPayments);
+    document.getElementById("bulkPaymentsStopBtn").addEventListener("click", () => { bulkPaymentsCancelled = true; });
+    document.getElementById("matchSelect").addEventListener("change", renderMatchTab);
+    document.getElementById("matchShowAll").addEventListener("change", renderMatchTab);
+    document.getElementById("modeSavedBtn").addEventListener("click", () => setMatchMode("saved"));
+    document.getElementById("modeCustomBtn").addEventListener("click", () => setMatchMode("custom"));
+    document.getElementById("customPmCountryInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commitPendingCountryInput(); renderCustomChips(); }
+    });
+    document.getElementById("customPmFindBtn").addEventListener("click", () => { commitPendingCountryInput(); renderMatchTab(); });
+    document.getElementById("customPmSaveBtn").addEventListener("click", saveCustomAsPaymentMethod);
+    document.getElementById("resetLink").addEventListener("click", async (e) => {
+      e.preventDefault();
+      alert("To reset to seed defaults on this deployment, clear the KV store from the Vercel dashboard (Storage tab) and reload — the server will reseed automatically on the next request.");
+    });
+  }
+
+  async function init() {
+    wireStaticEvents();
+    document.getElementById("loading").textContent = "Loading data…";
+    try {
+      await loadAll();
+    } catch (e) {
+      document.getElementById("loading").textContent = "Failed to load data: " + e.message;
+      return;
+    }
+    document.getElementById("loading").style.display = "none";
+    switchTab("merchants");
+  }
+
+  init();
+})();
