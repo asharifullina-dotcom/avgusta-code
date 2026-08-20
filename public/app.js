@@ -65,8 +65,9 @@
     const el = document.getElementById("ticker");
     if (top.length === 0) { el.style.display = "none"; return; }
     el.style.display = "flex";
+    const activeCountry = (document.getElementById("countryFilter") || {}).value || "";
     el.innerHTML = top.map(([name, count], i) => `
-      <div class="ticker-item" data-country="${escapeHtml(name)}" role="button" tabindex="0" title="Filter merchants by ${escapeHtml(name)}" style="cursor:pointer;">
+      <div class="ticker-item${name === activeCountry ? " active" : ""}" data-country="${escapeHtml(name)}" role="button" tabindex="0" title="${name === activeCountry ? "Clear filter" : "Filter merchants by " + escapeHtml(name)}" style="cursor:pointer;">
         <span class="ticker-rank">${String(i + 1).padStart(2, "0")}</span>
         <span class="ticker-name">${escapeHtml(name)}</span>
         <span class="ticker-count">${count}</span>
@@ -78,18 +79,29 @@
       item.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
     });
   }
-  // Clicking a ticker country jumps to the Merchants tab filtered by it.
+  // Clicking a ticker country filters the Merchants tab by it; clicking the
+  // one that's already active turns the filter back off (toggle).
   function filterByCountry(country) {
     const sel = document.getElementById("countryFilter");
     populateCountryFilter();
-    if (![...sel.options].some((o) => o.value === country)) {
-      const opt = document.createElement("option");
-      opt.value = country; opt.textContent = country; sel.appendChild(opt);
+    if (sel.value === country) { sel.value = ""; } // toggle off
+    else {
+      if (![...sel.options].some((o) => o.value === country)) {
+        const opt = document.createElement("option");
+        opt.value = country; opt.textContent = country; sel.appendChild(opt);
+      }
+      sel.value = country;
     }
-    sel.value = country;
     if (activeTab !== "merchants") switchTab("merchants");
     else renderMerchantsTab();
     document.getElementById("tab-merchants").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  // Reset every merchant filter (search + country + confidence).
+  function clearMerchantFilters() {
+    document.getElementById("merchantSearch").value = "";
+    document.getElementById("countryFilter").value = "";
+    document.getElementById("confFilter").value = "";
+    renderMerchantsTab();
   }
   function renderAllChrome() {
     renderStats();
@@ -125,6 +137,9 @@
     const countryFilter = document.getElementById("countryFilter").value;
     const confFilterVal = document.getElementById("confFilter").value;
 
+    const clearBtn = document.getElementById("clearFiltersBtn");
+    if (clearBtn) clearBtn.style.display = (search || countryFilter || confFilterVal) ? "inline-block" : "none";
+
     let list = merchants.filter((m) => {
       if (search && !(m.company.toLowerCase().includes(search) || merchantUrls(m).some((u) => u.toLowerCase().includes(search)))) return false;
       if (countryFilter && !(m.countries || []).includes(countryFilter)) return false;
@@ -138,12 +153,12 @@
     tbody.innerHTML = list.map((m) => {
       const countriesHtml = (m.countries && m.countries.length)
         ? m.countries.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")
-        : `<span class="chip empty">Insufficient data</span>`;
+        : `<span class="chip empty">${escapeHtml(m.countriesNote || "Insufficient data")}</span>`;
       const sourceTag = m.countriesSource === "similarweb"
         ? `<div class="hint">via Similarweb${m.countriesUpdatedAt ? ", " + new Date(m.countriesUpdatedAt).toLocaleDateString() : ""}</div>` : "";
       const paymentsHtml = (m.paymentMethodsOnSite && m.paymentMethodsOnSite.length)
         ? m.paymentMethodsOnSite.map((p) => `<span class="chip">${escapeHtml(p)}</span>`).join("")
-        : `<span class="chip empty">Not checked</span>`;
+        : `<span class="chip empty">${m.paymentMethodsUpdatedAt ? "None found" : "Not checked"}</span>`;
       const paymentsTag = m.paymentMethodsUpdatedAt
         ? `<div class="hint">checked ${new Date(m.paymentMethodsUpdatedAt).toLocaleDateString()}</div>` : "";
       const urls = merchantUrls(m);
@@ -720,6 +735,7 @@
     document.getElementById("merchantSearch").addEventListener("input", renderMerchantsTab);
     document.getElementById("countryFilter").addEventListener("change", renderMerchantsTab);
     document.getElementById("confFilter").addEventListener("change", renderMerchantsTab);
+    document.getElementById("clearFiltersBtn").addEventListener("click", clearMerchantFilters);
     document.getElementById("exportMerchantsBtn").addEventListener("click", exportMerchantsCsv);
     document.getElementById("importMerchantsBtn").addEventListener("click", () => document.getElementById("importMerchantsFile").click());
     document.getElementById("importMerchantsFile").addEventListener("change", (e) => {

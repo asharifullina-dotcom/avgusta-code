@@ -41,7 +41,8 @@ module.exports = async (req, res) => {
     merchant.countriesDetail = merged;
     merchant.countriesSource = 'similarweb';
     merchant.countriesUpdatedAt = new Date().toISOString();
-    if (merchant.countries.length) merchant.confidence = 'High';
+    if (merchant.countries.length) { merchant.confidence = 'High'; delete merchant.countriesNote; }
+    else { merchant.countriesNote = 'No Similarweb data for this site'; }
 
     await saveMerchants(merchants);
     return res.status(200).json(merchant);

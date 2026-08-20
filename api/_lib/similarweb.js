@@ -26,7 +26,12 @@ async function fetchJson(url) {
     throw new Error(`Similarweb response was not JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
   }
   if (!res.ok) {
-    throw new Error(`Similarweb HTTP ${res.status}: ${data.message || JSON.stringify(data).slice(0, 200)}`);
+    const msg = (data && data.meta && data.meta.error_message) || (data && data.message) || JSON.stringify(data).slice(0, 200);
+    const err = new Error(`Similarweb HTTP ${res.status}: ${msg}`);
+    // Similarweb answers "Data not found" (often as a 404) when it simply has
+    // no coverage for a domain — that's an empty result, not a real failure.
+    if (/not found|no data/i.test(String(msg))) err.noData = true;
+    throw err;
   }
   return data;
 }
@@ -35,7 +40,9 @@ async function getTopCountries(domain, limit) {
   if (!process.env.SIMILARWEB_API_KEY) {
     throw new Error('SIMILARWEB_API_KEY is not set — add it in Vercel project Settings → Environment Variables.');
   }
-  const data = await fetchJson(SIMILARWEB_ENDPOINTS.trafficByCountry(domain));
+  let data;
+  try { data = await fetchJson(SIMILARWEB_ENDPOINTS.trafficByCountry(domain)); }
+  catch (e) { if (e.noData) return []; throw e; }
   const records = data.records || data.data || [];
   const sorted = records
     .filter((r) => r.country || r.country_name)
@@ -57,7 +64,9 @@ async function getPaymentTechnologies(domain) {
   if (!process.env.SIMILARWEB_API_KEY) {
     throw new Error('SIMILARWEB_API_KEY is not set — add it in Vercel project Settings → Environment Variables.');
   }
-  const data = await fetchJson(SIMILARWEB_ENDPOINTS.technologies(domain));
+  let data;
+  try { data = await fetchJson(SIMILARWEB_ENDPOINTS.technologies(domain)); }
+  catch (e) { if (e.noData) return []; throw e; }
   // v4 technographics returns { technologies: [...] }; be tolerant of shape variants.
   const techList = data.technologies || data.data || data.records || [];
   const items = techList
