@@ -3,8 +3,12 @@
 // once you connect a KV store to this project in the Vercel dashboard —
 // you never need to type them in yourself.
 const { createClient } = require('@vercel/kv');
-const fs = require('fs');
-const path = require('path');
+
+// Seed data. Loaded via static `require()` (not fs.readFileSync with a computed
+// path) so Vercel's file-tracing reliably bundles these JSON files into the
+// serverless function — otherwise they're missing at runtime (ENOENT).
+const SEED_MERCHANTS = require('../_seed_merchants.json');
+const SEED_PAYMENTS = require('../_seed_payments.json');
 
 // Vercel's Marketplace KV/Upstash integration may prefix the injected env vars
 // (e.g. `storage_KV_REST_API_URL`). The default `kv` export only reads the
@@ -17,12 +21,6 @@ const kv = createClient({
 const MERCHANTS_KEY = 'merchants_v1';
 const PAYMENTS_KEY = 'payment_methods_v1';
 
-function loadSeed(filename) {
-  const p = path.join(__dirname, '..', filename);
-  const raw = fs.readFileSync(p, 'utf-8');
-  return JSON.parse(raw);
-}
-
 function uid(prefix) {
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 }
@@ -30,7 +28,7 @@ function uid(prefix) {
 async function getMerchants() {
   let data = await kv.get(MERCHANTS_KEY);
   if (!data) {
-    const seed = loadSeed('_seed_merchants.json').map((m) => ({ ...m, id: uid('m') }));
+    const seed = SEED_MERCHANTS.map((m) => ({ ...m, id: uid('m') }));
     await kv.set(MERCHANTS_KEY, seed);
     return seed;
   }
@@ -44,7 +42,7 @@ async function saveMerchants(merchants) {
 async function getPaymentMethods() {
   let data = await kv.get(PAYMENTS_KEY);
   if (!data) {
-    const seed = loadSeed('_seed_payments.json').map((p) => ({ ...p, id: uid('p') }));
+    const seed = SEED_PAYMENTS.map((p) => ({ ...p, id: uid('p') }));
     await kv.set(PAYMENTS_KEY, seed);
     return seed;
   }
